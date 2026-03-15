@@ -261,6 +261,106 @@ def _apply_street_geonodes(obj):
 	mod.node_group = group
 
 
+def _get_or_create_terrain_snap_geonodes():
+	"""Create a Geometry Nodes group that snaps vertices onto a terrain mesh via raycast."""
+	name = 'OSM Snap to Terrain'
+	if name in bpy.data.node_groups:
+		return bpy.data.node_groups[name]
+
+	group = bpy.data.node_groups.new(name, 'GeometryNodeTree')
+
+	# Interface
+	group.interface.new_socket(name='Geometry', in_out='INPUT', socket_type='NodeSocketGeometry')
+	group.interface.new_socket(name='Terrain', in_out='INPUT', socket_type='NodeSocketObject')
+	s_off = group.interface.new_socket(name='Z Offset', in_out='INPUT', socket_type='NodeSocketFloat')
+	s_off.default_value = 0.1
+	s_off.min_value = -100.0
+	s_off.max_value = 100.0
+	group.interface.new_socket(name='Geometry', in_out='OUTPUT', socket_type='NodeSocketGeometry')
+
+	nodes = group.nodes
+	links = group.links
+
+	n_in = nodes.new('NodeGroupInput'); n_in.location = (-900, 0)
+	n_out = nodes.new('NodeGroupOutput'); n_out.location = (600, 0)
+
+	# Object Info → terrain geometry
+	n_objinfo = nodes.new('GeometryNodeObjectInfo')
+	n_objinfo.transform_space = 'RELATIVE'
+	n_objinfo.location = (-700, -300)
+	links.new(n_in.outputs[1], n_objinfo.inputs['Object'])
+
+	# Current vertex position
+	n_pos = nodes.new('GeometryNodeInputPosition')
+	n_pos.location = (-700, -100)
+
+	n_sep = nodes.new('ShaderNodeSeparateXYZ')
+	n_sep.location = (-500, -100)
+	links.new(n_pos.outputs[0], n_sep.inputs[0])
+
+	# Ray source: (x, y, 10000) — cast from high above
+	n_src = nodes.new('ShaderNodeCombineXYZ')
+	n_src.location = (-300, -100)
+	n_src.inputs['Z'].default_value = 10000.0
+	links.new(n_sep.outputs['X'], n_src.inputs['X'])
+	links.new(n_sep.outputs['Y'], n_src.inputs['Y'])
+
+	# Ray direction: straight down
+	n_dir = nodes.new('ShaderNodeCombineXYZ')
+	n_dir.location = (-300, -300)
+	n_dir.inputs['Z'].default_value = -1.0
+
+	# Raycast
+	n_ray = nodes.new('GeometryNodeRaycast')
+	n_ray.location = (-50, -200)
+	links.new(n_objinfo.outputs['Geometry'], n_ray.inputs['Target Geometry'])
+	links.new(n_src.outputs[0], n_ray.inputs['Source Position'])
+	links.new(n_dir.outputs[0], n_ray.inputs['Ray Direction'])
+	n_ray.inputs['Ray Length'].default_value = 20000.0
+
+	# Hit Z + offset
+	n_hit_sep = nodes.new('ShaderNodeSeparateXYZ')
+	n_hit_sep.location = (150, -250)
+	links.new(n_ray.outputs['Hit Position'], n_hit_sep.inputs[0])
+
+	n_add = nodes.new('ShaderNodeMath')
+	n_add.operation = 'ADD'
+	n_add.location = (350, -200)
+	links.new(n_hit_sep.outputs['Z'], n_add.inputs[0])
+	links.new(n_in.outputs[2], n_add.inputs[1])  # Z Offset
+
+	# New position (orig X, orig Y, hit Z + offset)
+	n_new_pos = nodes.new('ShaderNodeCombineXYZ')
+	n_new_pos.location = (350, -50)
+	links.new(n_sep.outputs['X'], n_new_pos.inputs['X'])
+	links.new(n_sep.outputs['Y'], n_new_pos.inputs['Y'])
+	links.new(n_add.outputs[0], n_new_pos.inputs['Z'])
+
+	# Set Position (only where ray hit)
+	n_setpos = nodes.new('GeometryNodeSetPosition')
+	n_setpos.location = (400, 100)
+	links.new(n_in.outputs[0], n_setpos.inputs['Geometry'])
+	links.new(n_ray.outputs['Is Hit'], n_setpos.inputs['Selection'])
+	links.new(n_new_pos.outputs[0], n_setpos.inputs['Position'])
+
+	links.new(n_setpos.outputs[0], n_out.inputs[0])
+	return group
+
+
+def _apply_terrain_snap(obj, terrain_obj):
+	"""Add Snap to Terrain modifier as first modifier on an object."""
+	group = _get_or_create_terrain_snap_geonodes()
+	mod = obj.modifiers.new('Snap to Terrain', type='NODES')
+	mod.node_group = group
+	# Set terrain object
+	for item in group.interface.items_tree:
+		if item.name == 'Terrain':
+			mod[item.identifier] = terrain_obj
+	# Move to top of modifier stack
+	while obj.modifiers.find(mod.name) > 0:
+		bpy.ops.object.modifier_move_up({'object': obj}, modifier=mod.name)
+
+
 ########################
 _join_buffer = None
 
