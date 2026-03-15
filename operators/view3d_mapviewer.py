@@ -349,54 +349,102 @@ def drawZoomBox(self, context):
 		batch.draw(shader)
 
 
-# Help button dimensions
-HELP_BTN_SIZE = 26
-HELP_BTN_MARGIN = 12
+# Help overlay persistent state — lives at module level, independent of operator lifecycle
+_help_visible = False
+_help_mouse_x = 0
+_help_mouse_y = 0
+_map_viewer_active = False
+_help_draw_handler = None
+
+# Help button
+HELP_BTN_H = 38
+HELP_BTN_MARGIN = 16
+HELP_BTN_PAD_X = 20
+HELP_BTN_LABEL = "?  Shortcuts"
 
 def getHelpBtnRect(context):
 	"""Return (x, y, w, h) of the help button in bottom-right corner"""
-	x = context.area.width - HELP_BTN_SIZE - HELP_BTN_MARGIN
+	font_id = 0
+	blf.size(font_id, 15)
+	tw = blf.dimensions(font_id, HELP_BTN_LABEL)[0]
+	btn_w = int(tw + HELP_BTN_PAD_X * 2)
+	x = context.area.width - btn_w - HELP_BTN_MARGIN
 	y = HELP_BTN_MARGIN
-	return x, y, HELP_BTN_SIZE, HELP_BTN_SIZE
+	return x, y, btn_w, HELP_BTN_H
 
 def isInsideRect(mx, my, x, y, w, h):
 	return x <= mx <= x + w and y <= my <= y + h
 
-def drawHelpOverlay(self, context):
-	"""Draw a help button and, when toggled, a shortcut reference panel"""
-	gpu.state.blend_set('ALPHA')
-
-	# -- Draw help button (bottom-right) --
-	bx, by, bw, bh = getHelpBtnRect(context)
-	hover = isInsideRect(self._help_mouse_x, self._help_mouse_y, bx, by, bw, bh)
-	if self.showHelp:
-		btn_color = (0.3, 0.6, 0.9, 0.9)
-	elif hover:
-		btn_color = (0.35, 0.35, 0.35, 0.85)
-	else:
-		btn_color = (0.22, 0.22, 0.22, 0.75)
-
+def drawRoundedRect(x, y, w, h, color, radius=6):
+	"""Draw a rectangle with rounded corners"""
 	shader = gpu.shader.from_builtin('UNIFORM_COLOR')
+	# Simple approach: draw center rect + edge rects (good enough for small radius)
 	verts = [
-		(bx, by, 0), (bx + bw, by, 0),
-		(bx, by + bh, 0), (bx + bw, by + bh, 0)
+		(x + radius, y, 0), (x + w - radius, y, 0),
+		(x + radius, y + h, 0), (x + w - radius, y + h, 0),
 	]
 	batch = batch_for_shader(shader, 'TRI_STRIP', {"pos": verts})
 	shader.bind()
-	shader.uniform_float("color", btn_color)
+	shader.uniform_float("color", color)
 	batch.draw(shader)
+	# left edge
+	verts = [
+		(x, y + radius, 0), (x + radius, y + radius, 0),
+		(x, y + h - radius, 0), (x + radius, y + h - radius, 0),
+	]
+	batch = batch_for_shader(shader, 'TRI_STRIP', {"pos": verts})
+	batch.draw(shader)
+	# right edge
+	verts = [
+		(x + w - radius, y + radius, 0), (x + w, y + radius, 0),
+		(x + w - radius, y + h - radius, 0), (x + w, y + h - radius, 0),
+	]
+	batch = batch_for_shader(shader, 'TRI_STRIP', {"pos": verts})
+	batch.draw(shader)
+	# corners (small squares to approximate rounding)
+	for cx, cy in [(x, y), (x + w - radius, y), (x, y + h - radius), (x + w - radius, y + h - radius)]:
+		verts = [
+			(cx + 1, cy, 0), (cx + radius, cy, 0),
+			(cx, cy + 1, 0), (cx + radius, cy + radius, 0),
+		]
+		batch = batch_for_shader(shader, 'TRI_STRIP', {"pos": verts})
+		batch.draw(shader)
 
-	# "?" label
+def _drawHelpPersistent():
+	"""Persistent draw callback — registered once at addon load, independent of operator"""
+	global _help_visible, _help_mouse_x, _help_mouse_y, _map_viewer_active
+	if not _map_viewer_active:
+		return
+
+	context = bpy.context
+	if context.area is None or context.area.type != 'VIEW_3D':
+		return
+
+	gpu.state.blend_set('ALPHA')
+
+	# -- Draw help button --
+	bx, by, bw, bh = getHelpBtnRect(context)
+	hover = isInsideRect(_help_mouse_x, _help_mouse_y, bx, by, bw, bh)
+	if _help_visible:
+		btn_color = (0.25, 0.55, 0.85, 0.92)
+	elif hover:
+		btn_color = (0.30, 0.30, 0.30, 0.88)
+	else:
+		btn_color = (0.20, 0.20, 0.20, 0.78)
+
+	drawRoundedRect(bx, by, bw, bh, btn_color)
+
+	# Button label
 	font_id = 0
-	blf.size(font_id, 16)
-	tw = blf.dimensions(font_id, "?")[0]
-	th = blf.dimensions(font_id, "?")[1]
+	blf.size(font_id, 15)
+	tw = blf.dimensions(font_id, HELP_BTN_LABEL)[0]
+	th = blf.dimensions(font_id, HELP_BTN_LABEL)[1]
 	blf.position(font_id, bx + (bw - tw) / 2, by + (bh - th) / 2 + 1, 0)
-	blf.color(font_id, 1.0, 1.0, 1.0, 1.0)
-	blf.draw(font_id, "?")
+	blf.color(font_id, 1.0, 1.0, 1.0, 0.95)
+	blf.draw(font_id, HELP_BTN_LABEL)
 
 	# -- Draw shortcuts panel if toggled --
-	if not self.showHelp:
+	if not _help_visible:
 		gpu.state.blend_set('NONE')
 		return
 
@@ -431,21 +479,15 @@ def drawHelpOverlay(self, context):
 	panel_w = key_col_w + max_desc_w + pad_x * 3
 	panel_h = len(shortcuts) * line_h + pad_y * 2 + 30
 
+	# position panel: right-aligned, opening upward above button
 	px = context.area.width - panel_w - HELP_BTN_MARGIN
-	py = by + bh + 8
+	py = by + bh + 10
 
 	# panel background
-	shader = gpu.shader.from_builtin('UNIFORM_COLOR')
-	verts = [
-		(px, py, 0), (px + panel_w, py, 0),
-		(px, py + panel_h, 0), (px + panel_w, py + panel_h, 0)
-	]
-	batch = batch_for_shader(shader, 'TRI_STRIP', {"pos": verts})
-	shader.bind()
-	shader.uniform_float("color", (0.12, 0.12, 0.12, 0.88))
-	batch.draw(shader)
+	drawRoundedRect(px, py, panel_w, panel_h, (0.12, 0.12, 0.12, 0.90))
 
 	# panel border
+	shader = gpu.shader.from_builtin('UNIFORM_COLOR')
 	border = [
 		(px, py, 0), (px + panel_w, py, 0),
 		(px + panel_w, py, 0), (px + panel_w, py + panel_h, 0),
@@ -454,7 +496,7 @@ def drawHelpOverlay(self, context):
 	]
 	batch = batch_for_shader(shader, 'LINES', {"pos": border})
 	shader.bind()
-	shader.uniform_float("color", (0.4, 0.4, 0.4, 0.6))
+	shader.uniform_float("color", (0.35, 0.35, 0.35, 0.5))
 	batch.draw(shader)
 
 	# title
@@ -707,16 +749,14 @@ class VIEW3D_OT_map_viewer(Operator):
 		#Option to adjust or not objects location when panning
 		self.updObjLoc = self.prefs.lockObj #if georef is locked then we need to adjust object location after each pan
 
-		#Help overlay state
-		self.showHelp = False
-		self._help_mouse_x = 0
-		self._help_mouse_y = 0
+		#Help overlay — activate persistent draw handler
+		global _map_viewer_active
+		_map_viewer_active = True
 
 		#Add draw callback to view space
 		args = (self, context)
 		self._drawTextHandler = bpy.types.SpaceView3D.draw_handler_add(drawInfosText, args, 'WINDOW', 'POST_PIXEL')
 		self._drawZoomBoxHandler = bpy.types.SpaceView3D.draw_handler_add(drawZoomBox, args, 'WINDOW', 'POST_PIXEL')
-		self._drawHelpHandler = bpy.types.SpaceView3D.draw_handler_add(drawHelpOverlay, args, 'WINDOW', 'POST_PIXEL')
 
 		#Add modal handler and init a timer
 		context.window_manager.modal_handler_add(self)
@@ -770,6 +810,7 @@ class VIEW3D_OT_map_viewer(Operator):
 
 
 	def modal(self, context, event):
+		global _help_visible, _help_mouse_x, _help_mouse_y, _map_viewer_active
 
 		context.area.tag_redraw()
 		scn = bpy.context.scene
@@ -778,6 +819,13 @@ class VIEW3D_OT_map_viewer(Operator):
 			#report thread progression
 			self.progress = self.map.srv.report
 			return {'PASS_THROUGH'}
+
+		#When help panel is open, consume all input except:
+		# - mouse move (for hover), timer, help button click (to close)
+		#Update help overlay mouse position
+		if event.type == 'MOUSEMOVE':
+			_help_mouse_x = event.mouse_region_x
+			_help_mouse_y = event.mouse_region_y
 
 
 		if event.type in ['WHEELUPMOUSE', 'NUMPAD_PLUS']:
@@ -922,7 +970,7 @@ class VIEW3D_OT_map_viewer(Operator):
 		if event.type == 'LEFTMOUSE' and event.value == 'PRESS' and not self.zoomBoxMode:
 			bx, by, bw, bh = getHelpBtnRect(context)
 			if isInsideRect(event.mouse_region_x, event.mouse_region_y, bx, by, bw, bh):
-				self.showHelp = not self.showHelp
+				_help_visible = not _help_visible
 				return {'RUNNING_MODAL'}
 
 		if event.type in {'LEFTMOUSE', 'MIDDLEMOUSE'}:
@@ -1037,7 +1085,7 @@ class VIEW3D_OT_map_viewer(Operator):
 			self.map.stop()
 			bpy.types.SpaceView3D.draw_handler_remove(self._drawTextHandler, 'WINDOW')
 			bpy.types.SpaceView3D.draw_handler_remove(self._drawZoomBoxHandler, 'WINDOW')
-			bpy.types.SpaceView3D.draw_handler_remove(self._drawHelpHandler, 'WINDOW')
+
 			context.area.header_text_set(None)
 			self.restart = True
 			return {'FINISHED'}
@@ -1047,7 +1095,7 @@ class VIEW3D_OT_map_viewer(Operator):
 			self.map.stop()
 			bpy.types.SpaceView3D.draw_handler_remove(self._drawTextHandler, 'WINDOW')
 			bpy.types.SpaceView3D.draw_handler_remove(self._drawZoomBoxHandler, 'WINDOW')
-			bpy.types.SpaceView3D.draw_handler_remove(self._drawHelpHandler, 'WINDOW')
+
 			context.area.header_text_set(None)
 			self.restart = True
 			self.dialog = 'SEARCH'
@@ -1058,7 +1106,7 @@ class VIEW3D_OT_map_viewer(Operator):
 			self.map.stop()
 			bpy.types.SpaceView3D.draw_handler_remove(self._drawTextHandler, 'WINDOW')
 			bpy.types.SpaceView3D.draw_handler_remove(self._drawZoomBoxHandler, 'WINDOW')
-			bpy.types.SpaceView3D.draw_handler_remove(self._drawHelpHandler, 'WINDOW')
+
 			context.area.header_text_set(None)
 			self.restart = True
 			self.dialog = 'OPTIONS'
@@ -1084,6 +1132,8 @@ class VIEW3D_OT_map_viewer(Operator):
 		if event.type == 'E' and event.value == 'PRESS':
 			#
 			if not self.map.srv.running and self.map.mosaic is not None:
+				_map_viewer_active = False
+				_help_visible = False
 				self.map.stop()
 				self.map.bkg.hide_viewport = True
 
@@ -1132,6 +1182,8 @@ class VIEW3D_OT_map_viewer(Operator):
 				self.zoomBoxMode = False
 				context.window.cursor_set('DEFAULT')
 			else:
+				_map_viewer_active = False
+				_help_visible = False
 				self.map.stop()
 				bpy.types.SpaceView3D.draw_handler_remove(self._drawTextHandler, 'WINDOW')
 				bpy.types.SpaceView3D.draw_handler_remove(self._drawZoomBoxHandler, 'WINDOW')
@@ -1191,15 +1243,25 @@ classes = [
 ]
 
 def register():
+	global _help_draw_handler
 	for cls in classes:
 		try:
 			bpy.utils.register_class(cls)
 		except ValueError as e:
-			#log.error('Cannot register {}'.format(cls), exc_info=True)
 			log.warning('{} is already registered, now unregister and retry... '.format(cls))
 			bpy.utils.unregister_class(cls)
 			bpy.utils.register_class(cls)
+	# Register persistent help overlay draw handler
+	if _help_draw_handler is None:
+		_help_draw_handler = bpy.types.SpaceView3D.draw_handler_add(
+			_drawHelpPersistent, (), 'WINDOW', 'POST_PIXEL')
 
 def unregister():
+	global _help_draw_handler, _map_viewer_active, _help_visible
+	_map_viewer_active = False
+	_help_visible = False
+	if _help_draw_handler is not None:
+		bpy.types.SpaceView3D.draw_handler_remove(_help_draw_handler, 'WINDOW')
+		_help_draw_handler = None
 	for cls in classes:
 		bpy.utils.unregister_class(cls)
