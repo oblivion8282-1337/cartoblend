@@ -604,7 +604,6 @@ class VIEW3D_OT_map_start(Operator):
 
 		if self.dialog == 'SEARCH':
 				layout.prop(self, 'query')
-				layout.prop(self, 'zoom', slider=True)
 
 		elif self.dialog == 'OPTIONS':
 			#viewPrefs = context.preferences.view
@@ -696,8 +695,6 @@ class VIEW3D_OT_map_start(Operator):
 			r = bpy.ops.view3d.map_search('EXEC_DEFAULT', query=self.query)
 			if r == {'CANCELLED'}:
 				self.report({'INFO'}, "No location found")
-			else:
-				geoscn.zoom = self.zoom
 
 
 		#Start map viewer operator
@@ -1232,6 +1229,16 @@ class VIEW3D_OT_map_search(bpy.types.Operator):
 				geoscn.updOriginGeo(lon, lat, updObjLoc=prefs.lockObj)
 			else:
 				geoscn.setOriginGeo(lon, lat)
+			#Auto-zoom based on Nominatim bounding box
+			if 'boundingbox' in result:
+				bbox = result['boundingbox'] #[south_lat, north_lat, west_lon, east_lon]
+				lat_extent = abs(float(bbox[1]) - float(bbox[0]))
+				lon_extent = abs(float(bbox[3]) - float(bbox[2]))
+				max_extent = max(lat_extent, lon_extent)
+				if max_extent > 0:
+					zoom = int(math.log2(360 / max_extent))
+					zoom = max(2, min(zoom, 16))
+					geoscn.zoom = zoom
 		return {'FINISHED'}
 
 
