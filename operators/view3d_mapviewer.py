@@ -60,6 +60,17 @@ PKG, SUBPKG = __package__.split('.', maxsplit=1) #blendergis.basemaps
 _nominatim_results = []
 _search_result_items = [] #enum items cache (prevent garbage collection)
 
+#Search history (most recent first, max 10)
+_search_history = []
+_search_history_items = [] #enum items cache (prevent garbage collection)
+
+#Info overlay data — updated by operator, read by persistent draw handler
+_overlay_zoom = 0
+_overlay_lat = 0.0
+_overlay_lon = 0.0
+_overlay_scale = 1
+_overlay_locked = False
+
 ####################
 
 class BaseMap(GeoScene):
@@ -302,36 +313,34 @@ class BaseMap(GeoScene):
 
 ####################################
 def drawInfosText(self, context):
-	#Get contexts
-	scn = context.scene
-	area = context.area
-	area3d = [reg for reg in area.regions if reg.type == 'WINDOW'][0]
-	view3d = area.spaces.active
-	reg3d = view3d.region_3d
+	"""Update header bar with essential status and push overlay data to module-level vars."""
+	global _overlay_zoom, _overlay_lat, _overlay_lon, _overlay_scale, _overlay_locked
+
 	#Get map props stored in scene
-	geoscn = GeoScene(scn)
+	geoscn = GeoScene(context.scene)
 	zoom = geoscn.zoom
 	scale = geoscn.scale
-	#
-	txt = "Map view : "
-	txt += "Zoom " + str(zoom)
+
+	# --- Update module-level overlay data for the persistent draw handler ---
+	_overlay_zoom = zoom
+	_overlay_scale = int(scale)
+	_overlay_locked = self.map.lockedZoom is not None
+
+	# Convert projected cursor coords to geographic lat/lon
+	try:
+		if self.posx != 0 or self.posy != 0:
+			lon, lat = self.map.tm.projToGeo(self.posx, self.posy)
+			_overlay_lat = lat
+			_overlay_lon = lon
+	except Exception:
+		pass  # keep previous values on error
+
+	# --- Simplified header: only progress and lock status ---
+	txt = "Map view"
 	if self.map.lockedZoom is not None:
-		txt += " (Locked)"
-	txt += " - Scale 1:" + str(int(scale))
-	'''
-	# view3d distance
-	dst = reg3d.view_distance
-	if dst > 1000:
-		dst /= 1000
-		unit = 'km'
-	else:
-		unit = 'm'
-	txt += ' 3D View distance ' + str(int(dst)) + ' ' + unit
-	'''
-	# cursor crs coords
-	txt += ' ' + str((int(self.posx), int(self.posy)))
-	# progress
-	txt += ' ' + self.progress
+		txt += " [Zoom locked]"
+	if self.progress:
+		txt += "  " + self.progress
 	context.area.header_text_set(txt)
 
 
@@ -424,6 +433,74 @@ def drawRoundedRect(x, y, w, h, color, radius=6):
 		batch = batch_for_shader(shader, 'TRI_STRIP', {"pos": verts})
 		batch.draw(shader)
 
+def _drawInfoOverlay(context):
+	"""Draw zoom level, coordinates and scale overlay in the bottom-left corner."""
+	global _overlay_zoom, _overlay_lat, _overlay_lon, _overlay_scale, _overlay_locked
+
+	font_id = 0
+	pad_x, pad_y = 14, 10
+	line_h = 22
+	margin = 16
+
+	# Build text lines (bottom-up order: first item drawn at bottom)
+	zoom_txt = "Z: {}".format(_overlay_zoom)
+	if _overlay_locked:
+		zoom_txt += "  (Locked)"
+
+	# Format lat/lon
+	lat_dir = "N" if _overlay_lat >= 0 else "S"
+	lon_dir = "E" if _overlay_lon >= 0 else "W"
+	coord_txt = "{:.4f}\u00b0 {}, {:.4f}\u00b0 {}".format(
+		abs(_overlay_lat), lat_dir, abs(_overlay_lon), lon_dir)
+
+	scale_txt = "Scale 1:{}".format(_overlay_scale)
+
+	lines = [zoom_txt, coord_txt, scale_txt]
+
+	# Measure panel size
+	blf.size(font_id, 14)
+	max_w = 0
+	for line in lines:
+		w = blf.dimensions(font_id, line)[0]
+		if w > max_w:
+			max_w = w
+
+	panel_w = int(max_w + pad_x * 2)
+	panel_h = int(len(lines) * line_h + pad_y * 2)
+
+	px = margin
+	py = margin + HELP_BTN_H + 12  # above the help button row
+
+	# Panel background
+	drawRoundedRect(px, py, panel_w, panel_h, (0.10, 0.10, 0.10, 0.75))
+
+	# Panel border
+	shader = gpu.shader.from_builtin('UNIFORM_COLOR')
+	border = [
+		(px, py, 0), (px + panel_w, py, 0),
+		(px + panel_w, py, 0), (px + panel_w, py + panel_h, 0),
+		(px + panel_w, py + panel_h, 0), (px, py + panel_h, 0),
+		(px, py + panel_h, 0), (px, py, 0)
+	]
+	batch = batch_for_shader(shader, 'LINES', {"pos": border})
+	shader.bind()
+	shader.uniform_float("color", (0.35, 0.35, 0.35, 0.40))
+	batch.draw(shader)
+
+	# Draw text lines top-to-bottom
+	blf.size(font_id, 14)
+	cy = py + panel_h - pad_y - 14
+	for i, line in enumerate(lines):
+		blf.position(font_id, px + pad_x, cy, 0)
+		if i == 0:
+			# Zoom level in accent color
+			blf.color(font_id, 0.6, 0.85, 1.0, 1.0)
+		else:
+			blf.color(font_id, 0.85, 0.85, 0.85, 0.95)
+		blf.draw(font_id, line)
+		cy -= line_h
+
+
 def _drawHelpPersistent():
 	"""Persistent draw callback — registered once at addon load, independent of operator"""
 	global _help_visible, _help_mouse_x, _help_mouse_y, _map_viewer_active
@@ -435,6 +512,9 @@ def _drawHelpPersistent():
 		return
 
 	gpu.state.blend_set('ALPHA')
+
+	# -- Draw info overlay (bottom-left) --
+	_drawInfoOverlay(context)
 
 	# -- Draw help button --
 	bx, by, bw, bh = getHelpBtnRect(context)
@@ -552,10 +632,6 @@ class VIEW3D_OT_map_start(Operator):
 	bl_label = "Basemap"
 	bl_options = {'REGISTER'}
 
-	#special function to auto redraw an operator popup called through invoke_props_dialog
-	def check(self, context):
-		return True
-
 	def listSources(self, context):
 		srcItems = []
 		for srckey, src in SOURCES.items():
@@ -607,9 +683,32 @@ class VIEW3D_OT_map_start(Operator):
 
 	query: StringProperty(name="Go to")
 
+	def listHistory(self, context):
+		global _search_history_items
+		_search_history_items = [('NONE', '-- Recent searches --', '')]
+		for i, q in enumerate(_search_history):
+			_search_history_items.append((str(i), q, ''))
+		return _search_history_items
+
+	history: EnumProperty(
+		name="History",
+		description="Recent searches",
+		items=listHistory
+	)
+
 	zoom: IntProperty(name='Zoom level', min=0, max=25)
 
 	recenter: BoolProperty(name='Center to existing objects')
+
+	#special function to auto redraw an operator popup called through invoke_props_dialog
+	def check(self, context):
+		# If user picks a history entry, populate the query field
+		if self.history != 'NONE':
+			idx = int(self.history)
+			if 0 <= idx < len(_search_history):
+				self.query = _search_history[idx]
+			self.history = 'NONE'
+		return True
 
 	def draw(self, context):
 		addonPrefs = context.preferences.addons[PKG].preferences
@@ -618,6 +717,9 @@ class VIEW3D_OT_map_start(Operator):
 
 		if self.dialog == 'SEARCH':
 				layout.prop(self, 'query')
+				if _search_history:
+					layout.separator()
+					layout.prop(self, 'history', text="Recent")
 
 		elif self.dialog == 'OPTIONS':
 			#viewPrefs = context.preferences.view
@@ -723,6 +825,14 @@ class VIEW3D_OT_map_start(Operator):
 				self.report({'INFO'}, "No location found")
 				#Fall through to restart map viewer
 			else:
+				# Add to search history (most recent first, no duplicates, max 10)
+				global _search_history
+				q = self.query.strip()
+				if q:
+					if q in _search_history:
+						_search_history.remove(q)
+					_search_history.insert(0, q)
+					_search_history = _search_history[:10]
 				#Show results picker (it will start map viewer after selection)
 				self.dialog = 'MAP'
 				bpy.ops.view3d.map_search_results('INVOKE_DEFAULT',
@@ -1286,8 +1396,18 @@ class VIEW3D_OT_map_search_results(bpy.types.Operator):
 		_search_result_items = []
 		for i, r in enumerate(_nominatim_results):
 			name = r.get('display_name', 'Unknown')
-			if len(name) > 90:
-				name = name[:87] + '...'
+			# Append Nominatim result type (e.g. "city", "residential")
+			rtype = r.get('type', '')
+			if rtype:
+				rtype = rtype.replace('_', ' ').capitalize()
+				suffix = ' ({})'.format(rtype)
+			else:
+				suffix = ''
+			# Truncate keeping room for the type suffix
+			max_name = 90 - len(suffix)
+			if len(name) > max_name:
+				name = name[:max_name - 3] + '...'
+			name += suffix
 			_search_result_items.append((str(i), name, ''))
 		return _search_result_items
 
