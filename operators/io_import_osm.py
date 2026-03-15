@@ -262,7 +262,9 @@ def _apply_street_geonodes(obj):
 
 
 def _get_or_create_terrain_snap_geonodes():
-	"""Create a Geometry Nodes group that snaps vertices onto a terrain mesh via raycast."""
+	"""Create a Geometry Nodes group that snaps vertices onto a terrain mesh via raycast.
+	Vertices that miss the raycast (outside terrain extent) use the mean Z of hit vertices
+	as fallback to prevent dangling geometry."""
 	name = 'OSM Snap to Terrain'
 	if name in bpy.data.node_groups:
 		return bpy.data.node_groups[name]
@@ -282,7 +284,7 @@ def _get_or_create_terrain_snap_geonodes():
 	links = group.links
 
 	n_in = nodes.new('NodeGroupInput'); n_in.location = (-900, 0)
-	n_out = nodes.new('NodeGroupOutput'); n_out.location = (600, 0)
+	n_out = nodes.new('NodeGroupOutput'); n_out.location = (800, 0)
 
 	# Object Info → terrain geometry
 	n_objinfo = nodes.new('GeometryNodeObjectInfo')
@@ -318,29 +320,45 @@ def _get_or_create_terrain_snap_geonodes():
 	links.new(n_dir.outputs[0], n_ray.inputs['Ray Direction'])
 	n_ray.inputs['Ray Length'].default_value = 20000.0
 
-	# Hit Z + offset
+	# Get hit Z
 	n_hit_sep = nodes.new('ShaderNodeSeparateXYZ')
 	n_hit_sep.location = (150, -250)
 	links.new(n_ray.outputs['Hit Position'], n_hit_sep.inputs[0])
 
+	# Mean Z of all hit vertices (fallback for non-hit)
+	n_stat = nodes.new('GeometryNodeAttributeStatistic')
+	n_stat.data_type = 'FLOAT'
+	n_stat.location = (150, -450)
+	links.new(n_in.outputs[0], n_stat.inputs['Geometry'])
+	links.new(n_ray.outputs['Is Hit'], n_stat.inputs['Selection'])
+	links.new(n_hit_sep.outputs['Z'], n_stat.inputs[2])  # Attribute
+
+	# Switch: hit → hit_Z, miss → mean_Z
+	n_switch = nodes.new('GeometryNodeSwitch')
+	n_switch.input_type = 'FLOAT'
+	n_switch.location = (350, -300)
+	links.new(n_ray.outputs['Is Hit'], n_switch.inputs[0])
+	links.new(n_stat.outputs['Mean'], n_switch.inputs[1])   # False: mean Z
+	links.new(n_hit_sep.outputs['Z'], n_switch.inputs[2])   # True: hit Z
+
+	# Add Z offset
 	n_add = nodes.new('ShaderNodeMath')
 	n_add.operation = 'ADD'
-	n_add.location = (350, -200)
-	links.new(n_hit_sep.outputs['Z'], n_add.inputs[0])
-	links.new(n_in.outputs[2], n_add.inputs[1])  # Z Offset
+	n_add.location = (500, -200)
+	links.new(n_switch.outputs[0], n_add.inputs[0])
+	links.new(n_in.outputs[2], n_add.inputs[1])
 
-	# New position (orig X, orig Y, hit Z + offset)
+	# New position (orig X, orig Y, final Z)
 	n_new_pos = nodes.new('ShaderNodeCombineXYZ')
-	n_new_pos.location = (350, -50)
+	n_new_pos.location = (500, -50)
 	links.new(n_sep.outputs['X'], n_new_pos.inputs['X'])
 	links.new(n_sep.outputs['Y'], n_new_pos.inputs['Y'])
 	links.new(n_add.outputs[0], n_new_pos.inputs['Z'])
 
-	# Set Position (only where ray hit)
+	# Set Position on ALL vertices
 	n_setpos = nodes.new('GeometryNodeSetPosition')
-	n_setpos.location = (400, 100)
+	n_setpos.location = (650, 100)
 	links.new(n_in.outputs[0], n_setpos.inputs['Geometry'])
-	links.new(n_ray.outputs['Is Hit'], n_setpos.inputs['Selection'])
 	links.new(n_new_pos.outputs[0], n_setpos.inputs['Position'])
 
 	links.new(n_setpos.outputs[0], n_out.inputs[0])
