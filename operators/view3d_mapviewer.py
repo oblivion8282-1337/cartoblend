@@ -1541,8 +1541,9 @@ class VIEW3D_OT_map_goto(bpy.types.Operator):
 		_search_history.insert(0, query)
 		_search_history = _search_history[:10]
 
-		#Apply first result
+		#Apply first result and store resolved name
 		result = _nominatim_results[0]
+		context.scene.gis_goto_result = result.get('display_name', query)
 		lat, lon = float(result['lat']), float(result['lon'])
 		if geoscn.isGeoref:
 			geoscn.updOriginGeo(lon, lat, updObjLoc=prefs.lockObj)
@@ -1639,10 +1640,15 @@ def register():
 			log.warning('{} is already registered, now unregister and retry... '.format(cls))
 			bpy.utils.unregister_class(cls)
 			bpy.utils.register_class(cls)
-	# Scene property for inline "Go to Location" input in N-Panel
+	# Scene properties for inline "Go to Location" input in N-Panel
 	bpy.types.Scene.gis_goto_query = StringProperty(
 		name="Location",
 		description="Search for a place name or address",
+		default=""
+	)
+	bpy.types.Scene.gis_goto_result = StringProperty(
+		name="Result",
+		description="Resolved location from last search",
 		default=""
 	)
 	# Register persistent help overlay draw handler
@@ -1657,6 +1663,8 @@ def unregister():
 	if _help_draw_handler is not None:
 		bpy.types.SpaceView3D.draw_handler_remove(_help_draw_handler, 'WINDOW')
 		_help_draw_handler = None
+	if hasattr(bpy.types.Scene, 'gis_goto_result'):
+		del bpy.types.Scene.gis_goto_result
 	if hasattr(bpy.types.Scene, 'gis_goto_query'):
 		del bpy.types.Scene.gis_goto_query
 	for cls in classes:

@@ -211,27 +211,45 @@ class VIEW3D_PT_gis_webgeodata(bpy.types.Panel):
 			row = layout.row()
 			row.operator("view3d.map_resume", icon='LOOP_FORWARDS', text="Resume Map")
 			row.enabled = bpy.ops.view3d.map_resume.poll() if hasattr(bpy.ops.view3d, 'map_resume') else False
-			layout.separator()
-			# Inline "Go to Location" — text field + Go button
-			layout.label(text="Go to Location:", icon='VIEWZOOM')
-			row = layout.row(align=True)
-			row.prop(context.scene, 'gis_goto_query', text='')
-			row.operator("view3d.map_goto", icon='PLAY', text="")
-			# Search history dropdown
-			import sys
-			_mv = sys.modules.get(__package__ + '.operators.view3d_mapviewer')
-			if _mv:
-				_hist = getattr(_mv, '_search_history', [])
-				if _hist:
-					col = layout.column(align=True)
-					col.label(text="Recent:", icon='TIME')
-					for i, q in enumerate(_hist[:5]):
-						op = col.operator("view3d.map_goto_history", text=q, icon='DOT')
-						op.index = i
 		if IMPORT_OSM:
 			layout.operator("importgis.osm_query", icon_value=icons_dict["osm"].icon_id)
 		if GET_DEM:
 			layout.operator("importgis.dem_query", icon_value=icons_dict["raster"].icon_id)
+
+class VIEW3D_PT_gis_goto(bpy.types.Panel):
+	bl_label = "Go to Location"
+	bl_idname = "VIEW3D_PT_gis_goto"
+	bl_space_type = 'VIEW_3D'
+	bl_region_type = 'UI'
+	bl_category = 'GIS'
+	bl_order = 1
+
+	def draw(self, context):
+		layout = self.layout
+		row = layout.row(align=True)
+		row.prop(context.scene, 'gis_goto_query', text='')
+		row.operator("view3d.map_goto", icon='PLAY', text="")
+		# Show resolved location from last search
+		if context.scene.gis_goto_result:
+			box = layout.box()
+			col = box.column(align=True)
+			name = context.scene.gis_goto_result
+			parts = [p.strip() for p in name.split(',')]
+			if parts:
+				col.label(text=parts[0], icon='PINNED')
+			if len(parts) > 1:
+				col.label(text=', '.join(parts[1:]))
+		# Search history
+		import sys
+		_mv = sys.modules.get(__package__ + '.operators.view3d_mapviewer')
+		if _mv:
+			_hist = getattr(_mv, '_search_history', [])
+			if _hist:
+				col = layout.column(align=True)
+				col.label(text="Recent:", icon='TIME')
+				for i, q in enumerate(_hist[:5]):
+					op = col.operator("view3d.map_goto_history", text=q, icon='DOT')
+					op.index = i
 
 class VIEW3D_PT_gis_import(bpy.types.Panel):
 	bl_label = "Import"
@@ -239,7 +257,7 @@ class VIEW3D_PT_gis_import(bpy.types.Panel):
 	bl_space_type = 'VIEW_3D'
 	bl_region_type = 'UI'
 	bl_category = 'GIS'
-	bl_order = 1
+	bl_order = 2
 
 	def draw(self, context):
 		layout = self.layout
@@ -258,7 +276,7 @@ class VIEW3D_PT_gis_export(bpy.types.Panel):
 	bl_space_type = 'VIEW_3D'
 	bl_region_type = 'UI'
 	bl_category = 'GIS'
-	bl_order = 2
+	bl_order = 3
 
 	def draw(self, context):
 		layout = self.layout
@@ -271,7 +289,7 @@ class VIEW3D_PT_gis_camera(bpy.types.Panel):
 	bl_space_type = 'VIEW_3D'
 	bl_region_type = 'UI'
 	bl_category = 'GIS'
-	bl_order = 3
+	bl_order = 4
 
 	def draw(self, context):
 		layout = self.layout
@@ -287,7 +305,7 @@ class VIEW3D_PT_gis_mesh(bpy.types.Panel):
 	bl_space_type = 'VIEW_3D'
 	bl_region_type = 'UI'
 	bl_category = 'GIS'
-	bl_order = 4
+	bl_order = 5
 
 	def draw(self, context):
 		layout = self.layout
@@ -304,7 +322,7 @@ class VIEW3D_PT_gis_object(bpy.types.Panel):
 	bl_space_type = 'VIEW_3D'
 	bl_region_type = 'UI'
 	bl_category = 'GIS'
-	bl_order = 5
+	bl_order = 6
 
 	def draw(self, context):
 		layout = self.layout
@@ -317,7 +335,7 @@ class VIEW3D_PT_gis_nodes(bpy.types.Panel):
 	bl_space_type = 'VIEW_3D'
 	bl_region_type = 'UI'
 	bl_category = 'GIS'
-	bl_order = 6
+	bl_order = 7
 
 	def draw(self, context):
 		layout = self.layout
@@ -330,7 +348,7 @@ class VIEW3D_PT_gis_settings(bpy.types.Panel):
 	bl_space_type = 'VIEW_3D'
 	bl_region_type = 'UI'
 	bl_category = 'GIS'
-	bl_order = 7
+	bl_order = 8
 	bl_options = {'DEFAULT_CLOSED'}
 
 	def draw(self, context):
@@ -340,6 +358,7 @@ class VIEW3D_PT_gis_settings(bpy.types.Panel):
 
 panels = [
 	VIEW3D_PT_gis_webgeodata,
+	VIEW3D_PT_gis_goto,
 	VIEW3D_PT_gis_import,
 	VIEW3D_PT_gis_export,
 	VIEW3D_PT_gis_camera,
