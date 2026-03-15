@@ -324,6 +324,11 @@ def drawInfosText(self, context):
 	"""Update header bar with essential status and push overlay data to module-level vars."""
 	global _overlay_zoom, _overlay_lat, _overlay_lon, _overlay_scale, _overlay_locked
 
+	try:
+		_ = self.map
+	except ReferenceError:
+		return  # operator was removed (addon reload)
+
 	#Get map props stored in scene
 	geoscn = GeoScene(context.scene)
 	zoom = geoscn.zoom
@@ -353,6 +358,11 @@ def drawInfosText(self, context):
 
 
 def drawZoomBox(self, context):
+	try:
+		_ = self.zoomBoxMode
+	except ReferenceError:
+		return  # operator was removed (addon reload)
+
 	if self.zoomBoxMode and not self.zoomBoxDrag:
 		# before selection starts draw infinite cross
 		px, py = self.zb_xmax, self.zb_ymax
@@ -380,31 +390,9 @@ def drawZoomBox(self, context):
 		batch.draw(shader)
 
 
-# Help overlay persistent state — lives at module level, independent of operator lifecycle
-_help_visible = False
-_help_mouse_x = 0
-_help_mouse_y = 0
+# Overlay persistent state — lives at module level, independent of operator lifecycle
 _map_viewer_active = False
-_help_draw_handler = None
-
-# Help button
-HELP_BTN_H = 38
-HELP_BTN_MARGIN = 16
-HELP_BTN_PAD_X = 20
-HELP_BTN_LABEL = "?  Shortcuts"
-
-def getHelpBtnRect(context):
-	"""Return (x, y, w, h) of the help button in bottom-right corner"""
-	font_id = 0
-	blf.size(font_id, 15)
-	tw = blf.dimensions(font_id, HELP_BTN_LABEL)[0]
-	btn_w = int(tw + HELP_BTN_PAD_X * 2)
-	x = context.area.width - btn_w - HELP_BTN_MARGIN
-	y = HELP_BTN_MARGIN
-	return x, y, btn_w, HELP_BTN_H
-
-def isInsideRect(mx, my, x, y, w, h):
-	return x <= mx <= x + w and y <= my <= y + h
+_overlay_draw_handler = None
 
 def drawRoundedRect(x, y, w, h, color, radius=6):
 	"""Draw a rectangle with rounded corners"""
@@ -477,7 +465,7 @@ def _drawInfoOverlay(context):
 	panel_h = int(len(lines) * line_h + pad_y * 2)
 
 	px = margin
-	py = margin + HELP_BTN_H + 12  # above the help button row
+	py = margin
 
 	# Panel background
 	drawRoundedRect(px, py, panel_w, panel_h, (0.10, 0.10, 0.10, 0.75))
@@ -509,9 +497,8 @@ def _drawInfoOverlay(context):
 		cy -= line_h
 
 
-def _drawHelpPersistent():
-	"""Persistent draw callback — registered once at addon load, independent of operator"""
-	global _help_visible, _help_mouse_x, _help_mouse_y, _map_viewer_active
+def _drawOverlayPersistent():
+	"""Persistent draw callback — shows info overlay when map viewer is active"""
 	if not _map_viewer_active:
 		return
 
@@ -520,114 +507,7 @@ def _drawHelpPersistent():
 		return
 
 	gpu.state.blend_set('ALPHA')
-
-	# -- Draw info overlay (bottom-left) --
 	_drawInfoOverlay(context)
-
-	# -- Draw help button --
-	bx, by, bw, bh = getHelpBtnRect(context)
-	hover = isInsideRect(_help_mouse_x, _help_mouse_y, bx, by, bw, bh)
-	if _help_visible:
-		btn_color = (0.25, 0.55, 0.85, 0.92)
-	elif hover:
-		btn_color = (0.30, 0.30, 0.30, 0.88)
-	else:
-		btn_color = (0.20, 0.20, 0.20, 0.78)
-
-	drawRoundedRect(bx, by, bw, bh, btn_color)
-
-	# Button label
-	font_id = 0
-	blf.size(font_id, 15)
-	tw = blf.dimensions(font_id, HELP_BTN_LABEL)[0]
-	th = blf.dimensions(font_id, HELP_BTN_LABEL)[1]
-	blf.position(font_id, bx + (bw - tw) / 2, by + (bh - th) / 2 + 1, 0)
-	blf.color(font_id, 1.0, 1.0, 1.0, 0.95)
-	blf.draw(font_id, HELP_BTN_LABEL)
-
-	# -- Draw shortcuts panel if toggled --
-	if not _help_visible:
-		gpu.state.blend_set('NONE')
-		return
-
-	shortcuts = [
-		("Scroll / +/-", "Map zoom"),
-		("Ctrl + Scroll", "View zoom (no tile change)"),
-		("Alt + Scroll", "Scale x10"),
-		("LMB / MMB Drag", "Pan map"),
-		("Ctrl + Drag", "Pan view only"),
-		("Numpad 2/4/6/8", "Pan direction"),
-		("B", "Zoom box"),
-		("L", "Lock/unlock zoom level"),
-		("G", "Go to (search place)"),
-		("O", "Options"),
-		("E", "Export as mesh"),
-		("Space", "Switch layer/source"),
-		("ESC", "Exit"),
-	]
-
-	font_id = 0
-	blf.size(font_id, 13)
-	line_h = 22
-	pad_x, pad_y = 16, 12
-	key_col_w = 160
-
-	max_desc_w = 0
-	for key, desc in shortcuts:
-		w = blf.dimensions(font_id, desc)[0]
-		if w > max_desc_w:
-			max_desc_w = w
-
-	panel_w = key_col_w + max_desc_w + pad_x * 3
-	panel_h = len(shortcuts) * line_h + pad_y * 2 + 30
-
-	# position panel: right-aligned, opening upward above button
-	px = context.area.width - panel_w - HELP_BTN_MARGIN
-	py = by + bh + 10
-
-	# panel background
-	drawRoundedRect(px, py, panel_w, panel_h, (0.12, 0.12, 0.12, 0.90))
-
-	# panel border
-	shader = gpu.shader.from_builtin('UNIFORM_COLOR')
-	border = [
-		(px, py, 0), (px + panel_w, py, 0),
-		(px + panel_w, py, 0), (px + panel_w, py + panel_h, 0),
-		(px + panel_w, py + panel_h, 0), (px, py + panel_h, 0),
-		(px, py + panel_h, 0), (px, py, 0)
-	]
-	batch = batch_for_shader(shader, 'LINES', {"pos": border})
-	shader.bind()
-	shader.uniform_float("color", (0.35, 0.35, 0.35, 0.5))
-	batch.draw(shader)
-
-	# title
-	blf.size(font_id, 14)
-	ty = py + panel_h - pad_y - 14
-	blf.position(font_id, px + pad_x, ty, 0)
-	blf.color(font_id, 0.9, 0.9, 0.9, 1.0)
-	blf.draw(font_id, "Map Viewer Shortcuts")
-
-	# separator line
-	sep_y = ty - 8
-	sep_verts = [(px + pad_x, sep_y, 0), (px + panel_w - pad_x, sep_y, 0)]
-	batch = batch_for_shader(shader, 'LINES', {"pos": sep_verts})
-	shader.bind()
-	shader.uniform_float("color", (0.5, 0.5, 0.5, 0.5))
-	batch.draw(shader)
-
-	# shortcut lines
-	blf.size(font_id, 13)
-	cy = sep_y - line_h
-	for key, desc in shortcuts:
-		blf.position(font_id, px + pad_x, cy, 0)
-		blf.color(font_id, 0.6, 0.8, 1.0, 1.0)
-		blf.draw(font_id, key)
-		blf.position(font_id, px + pad_x + key_col_w, cy, 0)
-		blf.color(font_id, 0.78, 0.78, 0.78, 1.0)
-		blf.draw(font_id, desc)
-		cy -= line_h
-
 	gpu.state.blend_set('NONE')
 
 
@@ -967,7 +847,7 @@ class VIEW3D_OT_map_viewer(Operator):
 
 
 	def modal(self, context, event):
-		global _help_visible, _help_mouse_x, _help_mouse_y, _map_viewer_active, _goto_pending
+		global _map_viewer_active, _goto_pending
 
 		context.area.tag_redraw()
 		scn = bpy.context.scene
@@ -990,14 +870,6 @@ class VIEW3D_OT_map_viewer(Operator):
 					if (region.x <= mx <= region.x + region.width and
 						region.y <= my <= region.y + region.height):
 						return {'PASS_THROUGH'}
-
-		#When help panel is open, consume all input except:
-		# - mouse move (for hover), timer, help button click (to close)
-		#Update help overlay mouse position
-		if event.type == 'MOUSEMOVE':
-			_help_mouse_x = event.mouse_region_x
-			_help_mouse_y = event.mouse_region_y
-
 
 		if event.type in ['WHEELUPMOUSE', 'NUMPAD_PLUS']:
 
@@ -1131,18 +1003,6 @@ class VIEW3D_OT_map_viewer(Operator):
 							obj.location.x = loc1.x - dlt.x
 							obj.location.y = loc1.y - dlt.y
 
-
-		#Track mouse for help button hover
-		if event.type == 'MOUSEMOVE':
-			self._help_mouse_x = event.mouse_region_x
-			self._help_mouse_y = event.mouse_region_y
-
-		#HELP BUTTON CLICK
-		if event.type == 'LEFTMOUSE' and event.value == 'PRESS' and not self.zoomBoxMode:
-			bx, by, bw, bh = getHelpBtnRect(context)
-			if isInsideRect(event.mouse_region_x, event.mouse_region_y, bx, by, bw, bh):
-				_help_visible = not _help_visible
-				return {'RUNNING_MODAL'}
 
 		if event.type in {'LEFTMOUSE', 'MIDDLEMOUSE'}:
 
@@ -1304,7 +1164,6 @@ class VIEW3D_OT_map_viewer(Operator):
 			#
 			if not self.map.srv.running and self.map.mosaic is not None:
 				_map_viewer_active = False
-				_help_visible = False
 				self.map.stop()
 				self.map.bkg.hide_viewport = True
 
@@ -1354,7 +1213,6 @@ class VIEW3D_OT_map_viewer(Operator):
 				context.window.cursor_set('DEFAULT')
 			else:
 				_map_viewer_active = False
-				_help_visible = False
 				self.map.stop()
 				bpy.types.SpaceView3D.draw_handler_remove(self._drawTextHandler, 'WINDOW')
 				bpy.types.SpaceView3D.draw_handler_remove(self._drawZoomBoxHandler, 'WINDOW')
@@ -1632,7 +1490,7 @@ classes = [
 ]
 
 def register():
-	global _help_draw_handler
+	global _overlay_draw_handler
 	for cls in classes:
 		try:
 			bpy.utils.register_class(cls)
@@ -1651,18 +1509,18 @@ def register():
 		description="Resolved location from last search",
 		default=""
 	)
-	# Register persistent help overlay draw handler
-	if _help_draw_handler is None:
-		_help_draw_handler = bpy.types.SpaceView3D.draw_handler_add(
-			_drawHelpPersistent, (), 'WINDOW', 'POST_PIXEL')
+	# Register persistent info overlay draw handler
+	global _overlay_draw_handler
+	if _overlay_draw_handler is None:
+		_overlay_draw_handler = bpy.types.SpaceView3D.draw_handler_add(
+			_drawOverlayPersistent, (), 'WINDOW', 'POST_PIXEL')
 
 def unregister():
-	global _help_draw_handler, _map_viewer_active, _help_visible
+	global _overlay_draw_handler, _map_viewer_active
 	_map_viewer_active = False
-	_help_visible = False
-	if _help_draw_handler is not None:
-		bpy.types.SpaceView3D.draw_handler_remove(_help_draw_handler, 'WINDOW')
-		_help_draw_handler = None
+	if _overlay_draw_handler is not None:
+		bpy.types.SpaceView3D.draw_handler_remove(_overlay_draw_handler, 'WINDOW')
+		_overlay_draw_handler = None
 	if hasattr(bpy.types.Scene, 'gis_goto_result'):
 		del bpy.types.Scene.gis_goto_result
 	if hasattr(bpy.types.Scene, 'gis_goto_query'):

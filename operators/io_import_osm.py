@@ -96,7 +96,7 @@ def joinBmesh(src_bm, dest_bm):
 	TODO: replace this function by bmesh.ops.duplicate when 'dest' argument will be implemented
 	'''
 	global _join_buffer
-	if _join_buffer is None or not _join_buffer.is_valid:
+	if _join_buffer is None or _join_buffer.name not in bpy.data.meshes:
 		_join_buffer = bpy.data.meshes.new(".temp")
 	src_bm.to_mesh(_join_buffer)
 	dest_bm.from_mesh(_join_buffer)
@@ -607,6 +607,41 @@ class IMPORTGIS_OT_osm_file(Operator, OSM_IMPORT):
 
 ########################
 
+# Category definitions: user-friendly name → (OSM tags, feature types)
+OSM_CATEGORIES = {
+	'buildings': {
+		'label': 'Buildings',
+		'tags': ['building'],
+		'types': ['way', 'relation'],
+		'default': True,
+	},
+	'streets': {
+		'label': 'Streets',
+		'tags': ['highway'],
+		'types': ['way'],
+		'default': False,
+	},
+	'green': {
+		'label': 'Green Areas / Parks',
+		'tags': ['landuse', 'leisure'],
+		'types': ['way', 'relation'],
+		'default': False,
+	},
+	'water': {
+		'label': 'Water',
+		'tags': ['waterway', 'natural'],
+		'types': ['way', 'relation'],
+		'default': False,
+	},
+	'railway': {
+		'label': 'Railway',
+		'tags': ['railway'],
+		'types': ['way'],
+		'default': False,
+	},
+}
+
+
 class IMPORTGIS_OT_osm_query(Operator, OSM_IMPORT):
 	"""Import from Open Street Map"""
 
@@ -615,23 +650,53 @@ class IMPORTGIS_OT_osm_query(Operator, OSM_IMPORT):
 	bl_label = "Get OSM"
 	bl_options = {"UNDO"}
 
+	# User-friendly category checkboxes
+	cat_buildings: BoolProperty(name='Buildings', description='Import building footprints (extruded)', default=True)
+	cat_streets: BoolProperty(name='Streets', description='Import streets and roads', default=False)
+	cat_green: BoolProperty(name='Green Areas / Parks', description='Import parks, gardens and green spaces', default=False)
+	cat_water: BoolProperty(name='Water', description='Import rivers, lakes and waterways', default=False)
+	cat_railway: BoolProperty(name='Railway', description='Import railway lines', default=False)
+
 	#special function to auto redraw an operator popup called through invoke_props_dialog
 	def check(self, context):
 		return True
-
 
 	@classmethod
 	def poll(cls, context):
 		return context.mode == 'OBJECT'
 
-
 	def invoke(self, context, event):
 		#workaround to enum callback bug (T48873, T38489)
 		global OSMTAGS
 		OSMTAGS = getTags()
-
 		return context.window_manager.invoke_props_dialog(self)
 
+	def draw(self, context):
+		layout = self.layout
+		# Category checkboxes
+		layout.label(text="What to import:")
+		col = layout.column(align=True)
+		col.prop(self, 'cat_buildings', icon='HOME')
+		col.prop(self, 'cat_streets', icon='CURVE_PATH')
+		col.prop(self, 'cat_green', icon='OUTLINER_OB_FORCE_FIELD')
+		col.prop(self, 'cat_water', icon='MOD_FLUIDSIM')
+		col.prop(self, 'cat_railway', icon='GP_MULTIFRAME_EDITING')
+		# Building options
+		if self.cat_buildings:
+			layout.separator()
+			box = layout.box()
+			box.label(text="Building Options:", icon='HOME')
+			box.prop(self, 'buildingsExtrusion')
+			if self.buildingsExtrusion:
+				box.prop(self, 'defaultHeight')
+				box.prop(self, 'randomHeightThreshold')
+				box.prop(self, 'levelHeight')
+		# General options
+		layout.separator()
+		layout.prop(self, 'useElevObj')
+		if self.useElevObj:
+			layout.prop(self, 'objElevLst')
+		layout.prop(self, 'separate')
 
 	def execute(self, context):
 
@@ -660,6 +725,22 @@ class IMPORTGIS_OT_osm_query(Operator, OSM_IMPORT):
 			self.report({'ERROR'}, "Too large extent")
 			return {'CANCELLED'}
 
+		#Build tags and types from selected categories
+		tags = set()
+		types = set()
+		for key, cat in OSM_CATEGORIES.items():
+			if getattr(self, 'cat_' + key, False):
+				tags.update(cat['tags'])
+				types.update(cat['types'])
+
+		if not tags:
+			self.report({'ERROR'}, "Please select at least one category")
+			return {'CANCELLED'}
+
+		#Set the inherited filterTags and featureType so build() works correctly
+		self.filterTags = tags
+		self.featureType = types
+
 		#Get view3d bbox in lonlat
 		bbox = reprojBbox(geoscn.crs, 4326, bbox)
 
@@ -670,7 +751,7 @@ class IMPORTGIS_OT_osm_query(Operator, OSM_IMPORT):
 		#Download from overpass api
 		log.debug('Requests overpass server : {}'.format(prefs.overpassServer))
 		api = overpy.Overpass(overpass_server=prefs.overpassServer, user_agent=USER_AGENT)
-		query = queryBuilder(bbox, tags=list(self.filterTags), types=list(self.featureType), format='xml')
+		query = queryBuilder(bbox, tags=list(tags), types=list(types), format='xml')
 		log.debug('Overpass query : {}'.format(query)) # can fails with non utf8 chars
 
 		try:

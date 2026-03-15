@@ -342,13 +342,45 @@ class VIEW3D_PT_gis_nodes(bpy.types.Panel):
 		if TERRAIN_NODES:
 			layout.operator("analysis.nodes", icon_value=icons_dict["terrain"].icon_id, text='Terrain analysis')
 
+class VIEW3D_PT_gis_shortcuts(bpy.types.Panel):
+	bl_label = "Map Viewer Shortcuts"
+	bl_idname = "VIEW3D_PT_gis_shortcuts"
+	bl_space_type = 'VIEW_3D'
+	bl_region_type = 'UI'
+	bl_category = 'GIS'
+	bl_order = 8
+	bl_options = {'DEFAULT_CLOSED'}
+
+	def draw(self, context):
+		layout = self.layout
+		shortcuts = [
+			("Scroll / +/-", "Map zoom"),
+			("Ctrl + Scroll", "View zoom (no tile change)"),
+			("Alt + Scroll", "Scale x10"),
+			("LMB / MMB Drag", "Pan map"),
+			("Ctrl + Drag", "Pan view only"),
+			("Numpad 2/4/6/8", "Pan direction"),
+			("B", "Zoom box"),
+			("L", "Lock/unlock zoom level"),
+			("G", "Go to (search place)"),
+			("O", "Options"),
+			("E", "Export as mesh"),
+			("Space", "Switch layer/source"),
+			("ESC", "Exit"),
+		]
+		col = layout.column(align=True)
+		for key, desc in shortcuts:
+			row = col.row()
+			row.label(text=key)
+			row.label(text=desc)
+
 class VIEW3D_PT_gis_settings(bpy.types.Panel):
 	bl_label = "Settings"
 	bl_idname = "VIEW3D_PT_gis_settings"
 	bl_space_type = 'VIEW_3D'
 	bl_region_type = 'UI'
 	bl_category = 'GIS'
-	bl_order = 8
+	bl_order = 9
 	bl_options = {'DEFAULT_CLOSED'}
 
 	def draw(self, context):
@@ -365,6 +397,7 @@ panels = [
 	VIEW3D_PT_gis_mesh,
 	VIEW3D_PT_gis_object,
 	VIEW3D_PT_gis_nodes,
+	VIEW3D_PT_gis_shortcuts,
 	VIEW3D_PT_gis_settings,
 ]
 
