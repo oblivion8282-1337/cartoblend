@@ -69,6 +69,9 @@ _last_map_src = None
 _last_map_lay = None
 _last_map_grd = None
 
+#Flag: N-Panel "Go" button was clicked while map viewer is running
+_goto_pending = False
+
 #Info overlay data — updated by operator, read by persistent draw handler
 _overlay_zoom = 0
 _overlay_lat = 0.0
@@ -964,7 +967,7 @@ class VIEW3D_OT_map_viewer(Operator):
 
 
 	def modal(self, context, event):
-		global _help_visible, _help_mouse_x, _help_mouse_y, _map_viewer_active
+		global _help_visible, _help_mouse_x, _help_mouse_y, _map_viewer_active, _goto_pending
 
 		context.area.tag_redraw()
 		scn = bpy.context.scene
@@ -972,7 +975,21 @@ class VIEW3D_OT_map_viewer(Operator):
 		if event.type == 'TIMER':
 			#report thread progression
 			self.progress = self.map.srv.report
+			#Check if N-Panel "Go" button requested a location change
+			if _goto_pending:
+				_goto_pending = False
+				self.map.get()
 			return {'PASS_THROUGH'}
+
+		#Pass through events when mouse is over sidebar or toolbar
+		#(allows N-Panel interaction while map viewer is running)
+		if event.type not in {'TIMER', 'INBETWEEN_MOUSEMOVE'}:
+			mx, my = event.mouse_x, event.mouse_y
+			for region in context.area.regions:
+				if region.type in {'UI', 'TOOLS', 'HEADER', 'TOOL_HEADER'}:
+					if (region.x <= mx <= region.x + region.width and
+						region.y <= my <= region.y + region.height):
+						return {'PASS_THROUGH'}
 
 		#When help panel is open, consume all input except:
 		# - mouse move (for hover), timer, help button click (to close)
@@ -1489,46 +1506,16 @@ class VIEW3D_OT_map_search_results(bpy.types.Operator):
 
 
 class VIEW3D_OT_map_goto(bpy.types.Operator):
-	"""Search for a location and open it in the map viewer"""
+	"""Search for a location using the query from the N-Panel input field"""
 
 	bl_idname = "view3d.map_goto"
-	bl_label = "Go to Location"
-	bl_description = 'Search for a place and open it in the map viewer'
+	bl_label = "Go"
+	bl_description = 'Search for the location entered above'
 	bl_options = {'INTERNAL'}
 
-	query: StringProperty(name="Location")
-
-	def listHistory(self, context):
-		global _search_history_items
-		_search_history_items = [('NONE', '-- Recent --', '')]
-		for i, q in enumerate(_search_history):
-			_search_history_items.append((str(i), q, ''))
-		return _search_history_items
-
-	history: EnumProperty(
-		name="History",
-		items=listHistory
-	)
-
-	def check(self, context):
-		if self.history != 'NONE':
-			idx = int(self.history)
-			if 0 <= idx < len(_search_history):
-				self.query = _search_history[idx]
-			self.history = 'NONE'
-		return True
-
-	def invoke(self, context, event):
-		return context.window_manager.invoke_props_dialog(self)
-
-	def draw(self, context):
-		layout = self.layout
-		layout.prop(self, 'query', text='', icon='VIEWZOOM')
-		if _search_history:
-			layout.prop(self, 'history', text="Recent")
-
 	def execute(self, context):
-		if not self.query:
+		query = context.scene.gis_goto_query.strip()
+		if not query:
 			self.report({'INFO'}, "Please enter a location")
 			return {'CANCELLED'}
 
@@ -1538,7 +1525,7 @@ class VIEW3D_OT_map_goto(bpy.types.Operator):
 		#Query Nominatim
 		try:
 			global _nominatim_results
-			_nominatim_results = nominatimQuery(self.query, referer='bgis', user_agent=USER_AGENT)
+			_nominatim_results = nominatimQuery(query, referer='bgis', user_agent=USER_AGENT)
 		except Exception as e:
 			log.error('Failed Nominatim query', exc_info=True)
 			_nominatim_results = []
@@ -1549,37 +1536,59 @@ class VIEW3D_OT_map_goto(bpy.types.Operator):
 
 		#Save to search history
 		global _search_history
-		q = self.query.strip()
-		if q:
-			if q in _search_history:
-				_search_history.remove(q)
-			_search_history.insert(0, q)
-			_search_history = _search_history[:10]
+		if query in _search_history:
+			_search_history.remove(query)
+		_search_history.insert(0, query)
+		_search_history = _search_history[:10]
 
-		#If no previous map config, need to start basemap first
-		if _last_map_src is None:
-			#Apply first result directly, then let user start basemap
-			result = _nominatim_results[0]
-			lat, lon = float(result['lat']), float(result['lon'])
-			if geoscn.isGeoref:
-				geoscn.updOriginGeo(lon, lat, updObjLoc=prefs.lockObj)
-			else:
-				geoscn.setOriginGeo(lon, lat)
-			if 'boundingbox' in result:
-				bbox = result['boundingbox']
-				lat_extent = abs(float(bbox[1]) - float(bbox[0]))
-				lon_extent = abs(float(bbox[3]) - float(bbox[2]))
-				max_extent = max(lat_extent, lon_extent)
-				if max_extent > 0:
-					zoom = int(math.log2(360 / max_extent))
-					zoom = max(2, min(zoom, 16))
-					geoscn.zoom = zoom
+		#Apply first result
+		result = _nominatim_results[0]
+		lat, lon = float(result['lat']), float(result['lon'])
+		if geoscn.isGeoref:
+			geoscn.updOriginGeo(lon, lat, updObjLoc=prefs.lockObj)
+		else:
+			geoscn.setOriginGeo(lon, lat)
+		if 'boundingbox' in result:
+			bbox = result['boundingbox']
+			lat_extent = abs(float(bbox[1]) - float(bbox[0]))
+			lon_extent = abs(float(bbox[3]) - float(bbox[2]))
+			max_extent = max(lat_extent, lon_extent)
+			if max_extent > 0:
+				zoom = int(math.log2(360 / max_extent))
+				zoom = max(2, min(zoom, 16))
+				geoscn.zoom = zoom
+
+		#If map viewer is running, signal it to refresh at new location
+		global _goto_pending
+		if _map_viewer_active:
+			_goto_pending = True
+			name = result.get('display_name', query)
+			if len(name) > 60:
+				name = name[:57] + '...'
+			self.report({'INFO'}, name)
+		elif _last_map_src is not None:
+			#Map was used before but not running — restart it
+			bpy.ops.view3d.map_viewer('INVOKE_DEFAULT',
+				srckey=_last_map_src, laykey=_last_map_lay, grdkey=_last_map_grd,
+				recenter=False)
+		else:
 			self.report({'INFO'}, "Location set. Start Basemap to view the map.")
-			return {'FINISHED'}
 
-		#Show results picker (it will start map viewer after selection)
-		bpy.ops.view3d.map_search_results('INVOKE_DEFAULT',
-			srckey=_last_map_src, laykey=_last_map_lay, grdkey=_last_map_grd)
+		return {'FINISHED'}
+
+
+class VIEW3D_OT_map_goto_history(bpy.types.Operator):
+	"""Pick a location from search history"""
+
+	bl_idname = "view3d.map_goto_history"
+	bl_label = "Search History"
+	bl_options = {'INTERNAL'}
+
+	index: IntProperty()
+
+	def execute(self, context):
+		if 0 <= self.index < len(_search_history):
+			context.scene.gis_goto_query = _search_history[self.index]
 		return {'FINISHED'}
 
 
@@ -1617,6 +1626,7 @@ classes = [
 	VIEW3D_OT_map_search,
 	VIEW3D_OT_map_search_results,
 	VIEW3D_OT_map_goto,
+	VIEW3D_OT_map_goto_history,
 	VIEW3D_OT_map_resume
 ]
 
@@ -1629,6 +1639,12 @@ def register():
 			log.warning('{} is already registered, now unregister and retry... '.format(cls))
 			bpy.utils.unregister_class(cls)
 			bpy.utils.register_class(cls)
+	# Scene property for inline "Go to Location" input in N-Panel
+	bpy.types.Scene.gis_goto_query = StringProperty(
+		name="Location",
+		description="Search for a place name or address",
+		default=""
+	)
 	# Register persistent help overlay draw handler
 	if _help_draw_handler is None:
 		_help_draw_handler = bpy.types.SpaceView3D.draw_handler_add(
@@ -1641,5 +1657,7 @@ def unregister():
 	if _help_draw_handler is not None:
 		bpy.types.SpaceView3D.draw_handler_remove(_help_draw_handler, 'WINDOW')
 		_help_draw_handler = None
+	if hasattr(bpy.types.Scene, 'gis_goto_query'):
+		del bpy.types.Scene.gis_goto_query
 	for cls in classes:
 		bpy.utils.unregister_class(cls)

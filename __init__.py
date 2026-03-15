@@ -212,7 +212,22 @@ class VIEW3D_PT_gis_webgeodata(bpy.types.Panel):
 			row.operator("view3d.map_resume", icon='LOOP_FORWARDS', text="Resume Map")
 			row.enabled = bpy.ops.view3d.map_resume.poll() if hasattr(bpy.ops.view3d, 'map_resume') else False
 			layout.separator()
-			layout.operator("view3d.map_goto", icon='VIEWZOOM', text="Go to Location")
+			# Inline "Go to Location" — text field + Go button
+			layout.label(text="Go to Location:", icon='VIEWZOOM')
+			row = layout.row(align=True)
+			row.prop(context.scene, 'gis_goto_query', text='')
+			row.operator("view3d.map_goto", icon='PLAY', text="")
+			# Search history dropdown
+			import sys
+			_mv = sys.modules.get(__package__ + '.operators.view3d_mapviewer')
+			if _mv:
+				_hist = getattr(_mv, '_search_history', [])
+				if _hist:
+					col = layout.column(align=True)
+					col.label(text="Recent:", icon='TIME')
+					for i, q in enumerate(_hist[:5]):
+						op = col.operator("view3d.map_goto_history", text=q, icon='DOT')
+						op.index = i
 		if IMPORT_OSM:
 			layout.operator("importgis.osm_query", icon_value=icons_dict["osm"].icon_id)
 		if GET_DEM:
