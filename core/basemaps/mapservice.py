@@ -26,6 +26,9 @@ import threading
 import queue
 import time
 import urllib.request
+import http.client
+import ssl
+from urllib.parse import urlparse
 from ..lib import imghdr
 import sys, time, os
 
@@ -331,6 +334,113 @@ class BBoxRequest():
 
 
 
+class _ConnectionPool():
+	"""
+	Thread-safe HTTP(S) connection pool using stdlib http.client.
+	Each thread gets its own persistent connection per host, reused across
+	tile downloads to avoid TCP handshake overhead per tile.
+	"""
+
+	def __init__(self, timeout=TIMEOUT):
+		self._local = threading.local()
+		self._timeout = timeout
+		self._lock = threading.Lock()
+		self._all_connections = []  # track all connections for cleanup
+		self._ssl_context = ssl.create_default_context()
+
+	def _get_conn(self, scheme, host):
+		"""Get or create a persistent connection for the current thread and host."""
+		if not hasattr(self._local, 'connections'):
+			self._local.connections = {}
+
+		key = (scheme, host)
+		conn = self._local.connections.get(key)
+
+		if conn is not None:
+			# If the underlying socket is gone, discard the connection
+			try:
+				if conn.sock is None:
+					conn = None
+			except Exception:
+				conn = None
+
+		if conn is None:
+			conn = self._create_conn(scheme, host)
+			self._local.connections[key] = conn
+			with self._lock:
+				self._all_connections.append(conn)
+
+		return conn
+
+	def _create_conn(self, scheme, host):
+		"""Create a new HTTP or HTTPS connection."""
+		if scheme == 'https':
+			conn = http.client.HTTPSConnection(host, timeout=self._timeout,
+				context=self._ssl_context)
+		else:
+			conn = http.client.HTTPConnection(host, timeout=self._timeout)
+		return conn
+
+	def request(self, url, headers):
+		"""
+		Perform a GET request using a pooled persistent connection.
+		Returns the response body bytes, or raises on failure.
+		Automatically reconnects once if the existing connection was dropped.
+		"""
+		parsed = urlparse(url)
+		scheme = parsed.scheme
+		host = parsed.netloc
+		path = parsed.path
+		if parsed.query:
+			path = path + '?' + parsed.query
+
+		conn = self._get_conn(scheme, host)
+
+		for attempt in range(2):  # retry once on connection drop
+			try:
+				conn.request('GET', path, headers=headers)
+				resp = conn.getresponse()
+				data = resp.read()
+				if resp.status == 200:
+					return data
+				else:
+					log.debug("HTTP {} for {}".format(resp.status, url))
+					return None
+			except (http.client.RemoteDisconnected,
+					http.client.CannotSendRequest,
+					http.client.CannotSendHeader,
+					http.client.ResponseNotReady,
+					ConnectionResetError,
+					BrokenPipeError,
+					ConnectionAbortedError,
+					OSError) as e:
+				if attempt == 0:
+					# Connection was dropped by the server; reconnect and retry
+					log.debug("Connection lost ({}), reconnecting to {}".format(e, host))
+					try:
+						conn.close()
+					except Exception:
+						pass
+					conn = self._create_conn(scheme, host)
+					self._local.connections[(scheme, host)] = conn
+					with self._lock:
+						self._all_connections.append(conn)
+				else:
+					raise  # second attempt failed, propagate to caller
+
+		return None  # should not be reached
+
+	def close_all(self):
+		"""Close all tracked connections across all threads."""
+		with self._lock:
+			for conn in self._all_connections:
+				try:
+					conn.close()
+				except Exception:
+					pass
+			self._all_connections.clear()
+
+
 class MapService():
 	"""
 	Represent a tile service from source
@@ -414,6 +524,9 @@ class MapService():
 
 		self.lock = threading.RLock()
 
+		#HTTP connection pool for persistent keep-alive connections
+		self._connPool = _ConnectionPool(timeout=TIMEOUT)
+
 	def reportLoop(self):
 		msg = self.report
 		while self.running:
@@ -433,6 +546,7 @@ class MapService():
 
 	def stop(self):
 		self.running = False
+		self._connPool.close_all()
 
 	@property
 	def report(self):
@@ -573,20 +687,18 @@ class MapService():
 
 	def downloadTile(self, laykey, col, row, zoom):
 		"""
-		Download bytes data of requested tile in source tile matrix space
-		Return None if unable to download a valid stream
+		Download bytes data of requested tile in source tile matrix space.
+		Uses persistent HTTP connections via the connection pool to avoid
+		TCP handshake overhead for every tile.
+		Return None if unable to download a valid stream.
 		"""
 
 		url = self.buildUrl(laykey, col, row, zoom)
 		log.debug(url)
 
 		try:
-			#make request
-			req = urllib.request.Request(url, None, self.headers)
-			handle = urllib.request.urlopen(req, timeout=TIMEOUT)
-			#open image stream
-			data = handle.read()
-			handle.close()
+			#make request using pooled persistent connection
+			data = self._connPool.request(url, self.headers)
 		except Exception as e:
 			log.error("Can't download tile x{} y{}. Error {}".format(col, row, e))
 			data = None
@@ -847,7 +959,7 @@ class MapService():
 		if not bigTiff:
 			#Create numpy image in memory
 			mosaic = NpImage.new(img_w, img_h, bkgColor=MOSAIC_BKG_COLOR, georef=georef)
-			chunkSize = rq.nbTiles
+			chunkSize = min(10, rq.nbTiles) #number of tiles to extract in one cache request
 		else:
 			#Create bigtiff file on disk
 			mosaic = BigTiffWriter(path, img_w, img_h, georef)

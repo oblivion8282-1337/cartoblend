@@ -483,6 +483,7 @@ class IMPORTGIS_OT_shapefile(Operator):
 		if self.separateObjects:
 			layer = bpy.data.collections.new(shpName)
 			context.scene.collection.children.link(layer)
+			created_objects = [] #collect objects for deferred selection
 
 		#Main iteration over features
 		for i, feat in enumerate(shpIter):
@@ -673,9 +674,8 @@ class IMPORTGIS_OT_shapefile(Operator):
 				#Place obj
 				obj = bpy.data.objects.new(name, mesh)
 				layer.objects.link(obj)
-				context.view_layer.objects.active = obj
-				obj.select_set(True)
 				obj.location = (ox, oy, oz)
+				created_objects.append(obj)
 
 				# bpy operators can be very cumbersome when scene contains lot of objects
 				# because it cause implicit scene updates calls
@@ -701,6 +701,14 @@ class IMPORTGIS_OT_shapefile(Operator):
 				finalBm.from_mesh(buff)
 				bpy.data.meshes.remove(buff)
 				bm.clear()
+
+		#Batch-apply selection for separate objects (deferred from the loop for performance)
+		if self.separateObjects and created_objects:
+			#Update the view layer once so all linked objects become visible
+			context.view_layer.update()
+			for obj in created_objects:
+				obj.select_set(True)
+			context.view_layer.objects.active = created_objects[-1]
 
 		#Write back the whole mesh
 		if not self.separateObjects:
