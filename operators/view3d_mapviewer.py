@@ -56,6 +56,10 @@ from .lib.osm.nominatim import nominatimQuery
 
 PKG, SUBPKG = __package__.split('.', maxsplit=1) #blendergis.basemaps
 
+#Nominatim search results cache
+_nominatim_results = []
+_search_result_items = [] #enum items cache (prevent garbage collection)
+
 ####################
 
 class BaseMap(GeoScene):
@@ -663,6 +667,12 @@ class VIEW3D_OT_map_start(Operator):
 		#Display dialog
 		return context.window_manager.invoke_props_dialog(self)
 
+	def cancel(self, context):
+		#If invoked from map viewer (G, O, SPACE), restart it on cancel
+		if self.dialog in ('SEARCH', 'OPTIONS'):
+			bpy.ops.view3d.map_viewer('INVOKE_DEFAULT',
+				srckey=self.src, laykey=self.lay, grdkey=self.grd, recenter=False)
+
 	def execute(self, context):
 		scn = context.scene
 		geoscn = GeoScene(scn)
@@ -692,10 +702,22 @@ class VIEW3D_OT_map_start(Operator):
 
 		#Move scene origin to the researched place
 		if self.dialog == 'SEARCH':
-			r = bpy.ops.view3d.map_search('EXEC_DEFAULT', query=self.query)
-			if r == {'CANCELLED'}:
-				self.report({'INFO'}, "No location found")
+			try:
+				global _nominatim_results
+				_nominatim_results = nominatimQuery(self.query, referer='bgis', user_agent=USER_AGENT)
+			except Exception as e:
+				log.error('Failed Nominatim query', exc_info=True)
+				_nominatim_results = []
 
+			if not _nominatim_results:
+				self.report({'INFO'}, "No location found")
+				#Fall through to restart map viewer
+			else:
+				#Show results picker (it will start map viewer after selection)
+				self.dialog = 'MAP'
+				bpy.ops.view3d.map_search_results('INVOKE_DEFAULT',
+					srckey=self.src, laykey=self.lay, grdkey=self.grd)
+				return {'FINISHED'}
 
 		#Start map viewer operator
 		self.dialog = 'MAP' #reinit dialog type
@@ -1242,11 +1264,90 @@ class VIEW3D_OT_map_search(bpy.types.Operator):
 		return {'FINISHED'}
 
 
+class VIEW3D_OT_map_search_results(bpy.types.Operator):
+	"""Pick a location from search results"""
+
+	bl_idname = "view3d.map_search_results"
+	bl_label = "Search Results"
+	bl_options = {'INTERNAL'}
+
+	def listResults(self, context):
+		global _search_result_items
+		_search_result_items = []
+		for i, r in enumerate(_nominatim_results):
+			name = r.get('display_name', 'Unknown')
+			if len(name) > 90:
+				name = name[:87] + '...'
+			_search_result_items.append((str(i), name, ''))
+		return _search_result_items
+
+	search_result: EnumProperty(
+		name="Location",
+		items=listResults
+	)
+
+	srckey: StringProperty()
+	laykey: StringProperty()
+	grdkey: StringProperty()
+
+	def check(self, context):
+		return True
+
+	def invoke(self, context, event):
+		return context.window_manager.invoke_props_dialog(self, width=500)
+
+	def draw(self, context):
+		layout = self.layout
+		layout.label(text="{} results:".format(len(_nominatim_results)))
+		layout.prop(self, 'search_result', text='')
+
+	def execute(self, context):
+		geoscn = GeoScene(context.scene)
+		prefs = context.preferences.addons[PKG].preferences
+
+		idx = int(self.search_result)
+		if idx < 0 or idx >= len(_nominatim_results):
+			return {'CANCELLED'}
+
+		result = _nominatim_results[idx]
+		lat, lon = float(result['lat']), float(result['lon'])
+
+		if geoscn.isGeoref:
+			geoscn.updOriginGeo(lon, lat, updObjLoc=prefs.lockObj)
+		else:
+			geoscn.setOriginGeo(lon, lat)
+
+		#Auto-zoom based on bounding box
+		if 'boundingbox' in result:
+			bbox = result['boundingbox']
+			lat_extent = abs(float(bbox[1]) - float(bbox[0]))
+			lon_extent = abs(float(bbox[3]) - float(bbox[2]))
+			max_extent = max(lat_extent, lon_extent)
+			if max_extent > 0:
+				zoom = int(math.log2(360 / max_extent))
+				zoom = max(2, min(zoom, 16))
+				geoscn.zoom = zoom
+
+		#Start map viewer
+		self._start_viewer(context)
+
+		return {'FINISHED'}
+
+	def cancel(self, context):
+		#User cancelled results dialog, restart map viewer
+		self._start_viewer(context)
+
+	def _start_viewer(self, context):
+		bpy.ops.view3d.map_viewer('INVOKE_DEFAULT',
+			srckey=self.srckey, laykey=self.laykey, grdkey=self.grdkey,
+			recenter=False)
+
 
 classes = [
 	VIEW3D_OT_map_start,
 	VIEW3D_OT_map_viewer,
-	VIEW3D_OT_map_search
+	VIEW3D_OT_map_search,
+	VIEW3D_OT_map_search_results
 ]
 
 def register():
