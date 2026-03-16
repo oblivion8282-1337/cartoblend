@@ -207,6 +207,26 @@ SOURCES = {
 	},
 
 
+	"EOX_S2" : {
+		"name" : 'EOX Sentinel-2',
+		"description" : 'Sentinel-2 cloudless by EOX (CC BY-NC-SA 4.0)',
+		"service": 'TMS',
+		"grid": 'WM',
+		"quadTree": False,
+		"layers" : {
+			"S2_2024" : {"urlKey" : 's2cloudless-2024_3857', "name" : '2024', "description" : 'Sentinel-2 cloudless 2024', "format" : 'jpeg', "zmin" : 0, "zmax" : 21},
+			"S2_2023" : {"urlKey" : 's2cloudless-2023_3857', "name" : '2023', "description" : 'Sentinel-2 cloudless 2023', "format" : 'jpeg', "zmin" : 0, "zmax" : 21},
+			"S2_2022" : {"urlKey" : 's2cloudless-2022_3857', "name" : '2022', "description" : 'Sentinel-2 cloudless 2022', "format" : 'jpeg', "zmin" : 0, "zmax" : 21},
+			"S2_2021" : {"urlKey" : 's2cloudless-2021_3857', "name" : '2021', "description" : 'Sentinel-2 cloudless 2021', "format" : 'jpeg', "zmin" : 0, "zmax" : 21},
+			"S2_2020" : {"urlKey" : 's2cloudless-2020_3857', "name" : '2020', "description" : 'Sentinel-2 cloudless 2020', "format" : 'jpeg', "zmin" : 0, "zmax" : 21},
+			"S2_2019" : {"urlKey" : 's2cloudless-2019_3857', "name" : '2019', "description" : 'Sentinel-2 cloudless 2019', "format" : 'jpeg', "zmin" : 0, "zmax" : 21},
+			"S2_2018" : {"urlKey" : 's2cloudless-2018_3857', "name" : '2018', "description" : 'Sentinel-2 cloudless 2018', "format" : 'jpeg', "zmin" : 0, "zmax" : 21}
+		},
+		"urlTemplate": "https://tiles.maps.eox.at/wmts/1.0.0/{LAY}/default/g/{Z}/{Y}/{X}.jpg",
+		"referer": "https://s2maps.eu"
+	},
+
+
 	###############
 	# WMS examples
 	###############

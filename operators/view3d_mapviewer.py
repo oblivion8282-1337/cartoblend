@@ -659,10 +659,11 @@ class VIEW3D_OT_map_start(Operator):
 			self.report({'WARNING'}, "View3D not found, cannot run operator")
 			return {'CANCELLED'}
 
-		#If called via shortcut and a previous session exists, resume directly
+		#Pre-fill with last used source/layer/grid if available
 		if self.dialog == 'MAP' and _last_map_src is not None:
-			bpy.ops.view3d.map_resume('EXEC_DEFAULT')
-			return {'FINISHED'}
+			self.src = _last_map_src
+			self.lay = _last_map_lay
+			self.grd = _last_map_grd
 
 		#Update zoom
 		geoscn = GeoScene(context.scene)
