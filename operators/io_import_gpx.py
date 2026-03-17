@@ -733,6 +733,7 @@ class IMPORTGIS_OT_gpx_file(Operator):
 			obj = bpy.data.objects.new(name, mesh)
 			parent_collection.objects.link(obj)
 			obj.select_set(True)
+			obj.show_in_front = True  # always visible on top of basemap
 
 			# Apply terrain snap + route width GN
 			if self.routeWidth > 0:
@@ -788,6 +789,7 @@ class IMPORTGIS_OT_gpx_file(Operator):
 					obj = bpy.data.objects.new('Tracks', mesh)
 					trk_col.objects.link(obj)
 					obj.select_set(True)
+					obj.show_in_front = True
 					if self.routeWidth > 0:
 						_apply_route_geonodes(obj, self.routeWidth, self.curveResolution, profile_int, terrain_obj)
 					elif terrain_obj is not None:
@@ -834,6 +836,7 @@ class IMPORTGIS_OT_gpx_file(Operator):
 					obj = bpy.data.objects.new('Routes', mesh)
 					rte_col.objects.link(obj)
 					obj.select_set(True)
+					obj.show_in_front = True
 					if self.routeWidth > 0:
 						_apply_route_geonodes(obj, self.routeWidth, self.curveResolution, profile_int, terrain_obj)
 					elif terrain_obj is not None:
@@ -863,6 +866,7 @@ class IMPORTGIS_OT_gpx_file(Operator):
 				empty.location = (p[0] - dx, p[1] - dy, ele)
 				empty.empty_display_type = 'PLAIN_AXES'
 				empty.empty_display_size = 10.0
+				empty.show_in_front = True
 				empty['gpx_type'] = 'waypoint'
 				empty['gpx_name'] = wpt_name
 				empty['gpx_ele'] = ele
