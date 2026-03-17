@@ -306,6 +306,11 @@ def _get_or_create_route_geonodes():
 	s_merge.min_value = 0.0
 	s_merge.max_value = 50.0
 	s_merge.description = "Merge overlapping vertices at corners (half-width recommended)"
+	s_zoff = ng.interface.new_socket('Z Offset', in_out='INPUT', socket_type='NodeSocketFloat')
+	s_zoff.default_value = 0.0
+	s_zoff.min_value = -1000.0
+	s_zoff.max_value = 1000.0
+	s_zoff.description = "Lift route above surface"
 	ng.interface.new_socket('Geometry', in_out='OUTPUT', socket_type='NodeSocketGeometry')
 
 	nodes = ng.nodes
@@ -432,7 +437,19 @@ def _get_or_create_route_geonodes():
 	links.new(smooth.outputs['Geometry'], merge.inputs['Geometry'])
 	links.new(inp.outputs['Merge Dist'], merge.inputs['Distance'])
 
-	links.new(merge.outputs['Geometry'], out.inputs['Geometry'])
+	# Z Offset — lift route above surface
+	z_offset_vec = nodes.new('ShaderNodeCombineXYZ')
+	z_offset_vec.location = (700, -150)
+	z_offset_vec.inputs['X'].default_value = 0.0
+	z_offset_vec.inputs['Y'].default_value = 0.0
+	links.new(inp.outputs['Z Offset'], z_offset_vec.inputs['Z'])
+
+	z_setpos = nodes.new('GeometryNodeSetPosition')
+	z_setpos.location = (800, 0)
+	links.new(merge.outputs['Geometry'], z_setpos.inputs['Geometry'])
+	links.new(z_offset_vec.outputs[0], z_setpos.inputs['Offset'])
+
+	links.new(z_setpos.outputs['Geometry'], out.inputs['Geometry'])
 
 	return ng
 
