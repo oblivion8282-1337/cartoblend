@@ -1029,8 +1029,11 @@ class IMPORTGIS_OT_gpx_overlay_toggle(Operator):
 			self.report({'INFO'}, "GPX overlay disabled")
 		else:
 			gpx_overlay_ensure()
-			context.area.tag_redraw()
 			self.report({'INFO'}, "GPX overlay enabled")
+		# Force redraw all 3D viewports
+		for area in context.screen.areas:
+			if area.type == 'VIEW_3D':
+				area.tag_redraw()
 		return {'FINISHED'}
 
 
