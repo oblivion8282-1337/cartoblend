@@ -1523,7 +1523,7 @@ class IMPORTGIS_PT_building_materials(Panel):
 	bl_space_type = 'VIEW_3D'
 	bl_region_type = 'UI'
 	bl_category = 'GIS'
-	bl_parent_id = "VIEW3D_PT_gis_tools"
+	bl_parent_id = "VIEW3D_PT_gis_scene"
 
 	def draw_header(self, context):
 		self.layout.label(icon='HOME')

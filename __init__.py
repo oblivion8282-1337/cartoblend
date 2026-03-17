@@ -259,38 +259,28 @@ class VIEW3D_PT_gis_search(bpy.types.Panel):
 					op = col.operator("view3d.map_goto_history", text=q, icon='DOT')
 					op.index = i
 
-class VIEW3D_PT_gis_shortcuts(bpy.types.Panel):
-	bl_label = "Shortcuts"
-	bl_idname = "VIEW3D_PT_gis_shortcuts"
+# ─── Scene ────────────────────────────────────────────────
+
+class VIEW3D_PT_gis_scene(bpy.types.Panel):
+	bl_label = "Scene"
+	bl_idname = "VIEW3D_PT_gis_scene"
 	bl_space_type = 'VIEW_3D'
 	bl_region_type = 'UI'
 	bl_category = 'GIS'
-	bl_parent_id = "VIEW3D_PT_gis_map"
-	bl_order = 2
-	bl_options = {'DEFAULT_CLOSED'}
+	bl_order = 1
+
+	def draw_header(self, context):
+		self.layout.label(icon='SCENE_DATA')
 
 	def draw(self, context):
 		layout = self.layout
-		shortcuts = [
-			("Scroll / +/-", "Map zoom"),
-			("Ctrl + Scroll", "View zoom (no tile change)"),
-			("Alt + Scroll", "Scale x10"),
-			("LMB / MMB Drag", "Pan map"),
-			("Ctrl + Drag", "Pan view only"),
-			("Numpad 2/4/6/8", "Pan direction"),
-			("B", "Zoom box"),
-			("L", "Lock/unlock zoom level"),
-			("G", "Go to (search place)"),
-			("O", "Options"),
-			("E", "Export as mesh"),
-			("Space", "Switch layer/source"),
-			("ESC", "Exit"),
-		]
-		col = layout.column(align=True)
-		for key, desc in shortcuts:
-			row = col.row()
-			row.label(text=key)
-			row.label(text=desc)
+		row = layout.row(align=True)
+		if IMPORT_OSM:
+			row.operator("importgis.osm_query", icon_value=icons_dict["osm"].icon_id, text="Get OSM")
+		if GET_DEM:
+			row.operator("importgis.dem_query", icon_value=icons_dict["raster"].icon_id, text="Get DEM")
+
+# Building Materials sub-panel is registered via io_import_osm.py (bl_parent_id = VIEW3D_PT_gis_scene)
 
 # ─── Import ───────────────────────────────────────────────
 
@@ -300,25 +290,15 @@ class VIEW3D_PT_gis_import(bpy.types.Panel):
 	bl_space_type = 'VIEW_3D'
 	bl_region_type = 'UI'
 	bl_category = 'GIS'
-	bl_order = 1
+	bl_order = 2
+	bl_options = {'DEFAULT_CLOSED'}
 
 	def draw_header(self, context):
 		self.layout.label(icon='IMPORT')
 
 	def draw(self, context):
 		layout = self.layout
-		# Web queries in a box
-		box = layout.box()
-		box.label(text="Web", icon='URL')
-		row = box.row(align=True)
-		if IMPORT_OSM:
-			row.operator("importgis.osm_query", icon_value=icons_dict["osm"].icon_id, text="Get OSM")
-		if GET_DEM:
-			row.operator("importgis.dem_query", icon_value=icons_dict["raster"].icon_id, text="Get DEM")
-		# File imports in a box
-		box = layout.box()
-		box.label(text="File", icon='FILE_FOLDER')
-		col = box.column(align=True)
+		col = layout.column(align=True)
 		if IMPORT_SHP:
 			col.operator("importgis.shapefile_file_dialog", icon_value=icons_dict["shp"].icon_id, text='Shapefile (.shp)')
 		if IMPORT_GEORASTER:
@@ -345,7 +325,8 @@ class VIEW3D_PT_gis_export(bpy.types.Panel):
 	bl_space_type = 'VIEW_3D'
 	bl_region_type = 'UI'
 	bl_category = 'GIS'
-	bl_order = 2
+	bl_order = 3
+	bl_options = {'DEFAULT_CLOSED'}
 
 	def draw_header(self, context):
 		self.layout.label(icon='EXPORT')
@@ -363,7 +344,7 @@ class VIEW3D_PT_gis_tools(bpy.types.Panel):
 	bl_space_type = 'VIEW_3D'
 	bl_region_type = 'UI'
 	bl_category = 'GIS'
-	bl_order = 3
+	bl_order = 4
 	bl_options = {'DEFAULT_CLOSED'}
 
 	def draw_header(self, context):
@@ -435,10 +416,47 @@ class VIEW3D_PT_gis_settings(bpy.types.Panel):
 		layout.operator("bgis.pref_show", icon='PREFERENCES', text='Preferences')
 		layout.operator("bgis.logs", icon='TEXT', text='Show Logs')
 
+# ─── Shortcuts (standalone, bottom) ───────────────────────
+
+class VIEW3D_PT_gis_shortcuts(bpy.types.Panel):
+	bl_label = "Map Viewer Shortcuts"
+	bl_idname = "VIEW3D_PT_gis_shortcuts"
+	bl_space_type = 'VIEW_3D'
+	bl_region_type = 'UI'
+	bl_category = 'GIS'
+	bl_order = 99
+	bl_options = {'DEFAULT_CLOSED'}
+
+	def draw_header(self, context):
+		self.layout.label(icon='INFO')
+
+	def draw(self, context):
+		layout = self.layout
+		shortcuts = [
+			("Scroll / +/-", "Map zoom"),
+			("Ctrl + Scroll", "View zoom (no tile change)"),
+			("Alt + Scroll", "Scale x10"),
+			("LMB / MMB Drag", "Pan map"),
+			("Ctrl + Drag", "Pan view only"),
+			("Numpad 2/4/6/8", "Pan direction"),
+			("B", "Zoom box"),
+			("L", "Lock/unlock zoom level"),
+			("G", "Go to (search place)"),
+			("O", "Options"),
+			("E", "Export as mesh"),
+			("Space", "Switch layer/source"),
+			("ESC", "Exit"),
+		]
+		col = layout.column(align=True)
+		for key, desc in shortcuts:
+			row = col.row()
+			row.label(text=key)
+			row.label(text=desc)
+
 panels = [
 	VIEW3D_PT_gis_map,
 	VIEW3D_PT_gis_search,
-	VIEW3D_PT_gis_shortcuts,
+	VIEW3D_PT_gis_scene,
 	VIEW3D_PT_gis_import,
 	VIEW3D_PT_gis_export,
 	VIEW3D_PT_gis_tools,
@@ -446,6 +464,7 @@ panels = [
 	VIEW3D_PT_gis_camera,
 	VIEW3D_PT_gis_analysis,
 	VIEW3D_PT_gis_settings,
+	VIEW3D_PT_gis_shortcuts,
 ]
 
 
