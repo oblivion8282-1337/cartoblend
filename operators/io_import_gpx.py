@@ -246,7 +246,8 @@ def _get_or_create_gpx_snap_geonodes():
 
 def _get_or_create_route_geonodes():
 	"""Create or return a Geometry Nodes group for giving routes a visible width.
-	Includes curve smoothing via Resample + Set Spline Type (NURBS)."""
+	Supports Flat Band and Tube profiles, with curve subdivision smoothing.
+	Profile input: 0 = Flat Band, 1 = Tube."""
 	ng_name = 'GPX Route Width'
 	ng = bpy.data.node_groups.get(ng_name)
 	if ng is not None:
@@ -259,11 +260,16 @@ def _get_or_create_route_geonodes():
 	s_w = ng.interface.new_socket('Width', in_out='INPUT', socket_type='NodeSocketFloat')
 	s_w.default_value = 3.0
 	s_w.min_value = 0.1
-	s_res = ng.interface.new_socket('Resolution', in_out='INPUT', socket_type='NodeSocketFloat')
+	s_res = ng.interface.new_socket('Smoothing', in_out='INPUT', socket_type='NodeSocketFloat')
 	s_res.default_value = 2.0
 	s_res.min_value = 0.0
 	s_res.max_value = 10.0
 	s_res.description = "Subdivision cuts per segment – higher = smoother curve"
+	s_prof = ng.interface.new_socket('Profile', in_out='INPUT', socket_type='NodeSocketInt')
+	s_prof.default_value = 0
+	s_prof.min_value = 0
+	s_prof.max_value = 1
+	s_prof.description = "0 = Flat Band, 1 = Tube"
 	ng.interface.new_socket('Geometry', in_out='OUTPUT', socket_type='NodeSocketGeometry')
 
 	nodes = ng.nodes
@@ -285,41 +291,108 @@ def _get_or_create_route_geonodes():
 	subdiv.location = (-400, 0)
 	links.new(m2c.outputs['Curve'], subdiv.inputs['Curve'])
 
-	# Resolution → integer cuts (float to int via floor)
+	# Smoothing → integer cuts (float to int via floor)
 	f2i = nodes.new('ShaderNodeMath')
 	f2i.location = (-600, -150)
 	f2i.operation = 'FLOOR'
-	links.new(inp.outputs['Resolution'], f2i.inputs[0])
+	links.new(inp.outputs['Smoothing'], f2i.inputs[0])
 	links.new(f2i.outputs[0], subdiv.inputs['Cuts'])
 
-	# Curve Circle profile
-	profile = nodes.new('GeometryNodeCurvePrimitiveCircle')
-	profile.location = (-200, -250)
-	profile.mode = 'RADIUS'
-	profile.inputs['Resolution'].default_value = 8
-
-	# Width * 0.5 for radius
+	# Width * 0.5 for half-width/radius
 	mult = nodes.new('ShaderNodeMath')
-	mult.location = (-400, -250)
+	mult.location = (-400, -300)
 	mult.operation = 'MULTIPLY'
 	mult.inputs[1].default_value = 0.5
 	links.new(inp.outputs['Width'], mult.inputs[0])
-	links.new(mult.outputs[0], profile.inputs['Radius'])
 
-	# Curve to Mesh
+	# --- Profile A: Flat Band (Line from -hw to +hw) ---
+	line = nodes.new('GeometryNodeCurvePrimitiveLine')
+	line.location = (-200, -400)
+	line.mode = 'POINTS'
+	# Start: (-1, 0, 0), End: (1, 0, 0) — scaled by width later via Scale input
+	line.inputs['Start'].default_value = (-1.0, 0.0, 0.0)
+	line.inputs['End'].default_value = (1.0, 0.0, 0.0)
+
+	# --- Profile B: Tube (Circle) ---
+	circle = nodes.new('GeometryNodeCurvePrimitiveCircle')
+	circle.location = (-200, -200)
+	circle.mode = 'RADIUS'
+	circle.inputs['Resolution'].default_value = 8
+	circle.inputs['Radius'].default_value = 1.0
+
+	# Switch between profiles: Profile == 0 → Flat, Profile >= 1 → Tube
+	prof_cmp = nodes.new('FunctionNodeCompare')
+	prof_cmp.location = (-200, -550)
+	prof_cmp.data_type = 'INT'
+	prof_cmp.operation = 'GREATER_EQUAL'
+	prof_cmp.inputs[2].default_value = 1  # compare value
+	links.new(inp.outputs['Profile'], prof_cmp.inputs[2])  # A = Profile
+	# Actually: A >= 1 → Tube
+	# Inputs for INT compare: inputs[2] = A (INT), inputs[3] = B (INT)
+	links.new(inp.outputs['Profile'], prof_cmp.inputs[2])
+	prof_cmp.inputs[3].default_value = 1
+
+	prof_switch = nodes.new('GeometryNodeSwitch')
+	prof_switch.input_type = 'GEOMETRY'
+	prof_switch.location = (0, -300)
+	links.new(prof_cmp.outputs[0], prof_switch.inputs[0])         # Switch condition
+	links.new(line.outputs['Curve'], prof_switch.inputs[1])       # False (0): Flat
+	links.new(circle.outputs['Curve'], prof_switch.inputs[2])     # True (1): Tube
+
+	# Curve to Mesh with selected profile, scaled by half-width
 	c2m = nodes.new('GeometryNodeCurveToMesh')
-	c2m.location = (100, 0)
+	c2m.location = (200, 0)
 	links.new(subdiv.outputs['Curve'], c2m.inputs['Curve'])
-	links.new(profile.outputs['Curve'], c2m.inputs['Profile Curve'])
+	links.new(prof_switch.outputs[0], c2m.inputs['Profile Curve'])
+
+	# Scale profile by half-width (Curve to Mesh doesn't have a scale input,
+	# so we scale the profile curves directly)
+	# Actually Curve to Mesh does NOT have a Scale input in Blender 5.x
+	# So we need to scale the profile before feeding it in
+	# → Transform the profile curve
+
+	# Better approach: scale profile points by half-width
+	# We'll use Set Position to scale the profile before the switch
+
+	# Scale line profile
+	line_pos = nodes.new('GeometryNodeInputPosition')
+	line_pos.location = (-400, -450)
+
+	line_scale = nodes.new('ShaderNodeVectorMath')
+	line_scale.location = (-300, -450)
+	line_scale.operation = 'SCALE'
+	links.new(line_pos.outputs[0], line_scale.inputs[0])
+	links.new(mult.outputs[0], line_scale.inputs['Scale'])
+
+	line_setpos = nodes.new('GeometryNodeSetPosition')
+	line_setpos.location = (-150, -400)
+	links.new(line.outputs['Curve'], line_setpos.inputs['Geometry'])
+	links.new(line_scale.outputs[0], line_setpos.inputs['Position'])
+
+	# Scale circle profile
+	circ_scale = nodes.new('ShaderNodeVectorMath')
+	circ_scale.location = (-300, -250)
+	circ_scale.operation = 'SCALE'
+	links.new(line_pos.outputs[0], circ_scale.inputs[0])
+	links.new(mult.outputs[0], circ_scale.inputs['Scale'])
+
+	circ_setpos = nodes.new('GeometryNodeSetPosition')
+	circ_setpos.location = (-150, -200)
+	links.new(circle.outputs['Curve'], circ_setpos.inputs['Geometry'])
+	links.new(circ_scale.outputs[0], circ_setpos.inputs['Position'])
+
+	# Re-link switch to use scaled profiles
+	links.new(line_setpos.outputs['Geometry'], prof_switch.inputs[1])   # False: Flat
+	links.new(circ_setpos.outputs['Geometry'], prof_switch.inputs[2])   # True: Tube
 
 	# Set Shade Smooth
 	smooth = nodes.new('GeometryNodeSetShadeSmooth')
-	smooth.location = (300, 0)
+	smooth.location = (400, 0)
 	links.new(c2m.outputs['Mesh'], smooth.inputs['Geometry'])
 
 	# Merge by Distance (clean up)
 	merge = nodes.new('GeometryNodeMergeByDistance')
-	merge.location = (500, 0)
+	merge.location = (600, 0)
 	merge.inputs['Distance'].default_value = 0.01
 	links.new(smooth.outputs['Geometry'], merge.inputs['Geometry'])
 
@@ -328,8 +401,9 @@ def _get_or_create_route_geonodes():
 	return ng
 
 
-def _apply_route_geonodes(obj, width=3.0, resolution=5.0, terrain_obj=None):
-	"""Add terrain snap (if requested) + route width GN modifiers + material."""
+def _apply_route_geonodes(obj, width=3.0, resolution=2.0, profile=0, terrain_obj=None):
+	"""Add terrain snap (if requested) + route width GN modifiers + material.
+	profile: 0 = Flat Band, 1 = Tube."""
 	# Snap to terrain FIRST (before width conversion, so raycast hits terrain)
 	if terrain_obj is not None:
 		snap_ng = _get_or_create_gpx_snap_geonodes()
@@ -340,7 +414,7 @@ def _apply_route_geonodes(obj, width=3.0, resolution=5.0, terrain_obj=None):
 				snap_mod[item.identifier] = terrain_obj
 				break
 
-	# Route width + smoothing
+	# Route width + smoothing + profile
 	ng = _get_or_create_route_geonodes()
 	mod = obj.modifiers.new('GPX Route Width', 'NODES')
 	mod.node_group = ng
@@ -351,8 +425,10 @@ def _apply_route_geonodes(obj, width=3.0, resolution=5.0, terrain_obj=None):
 			continue
 		if item.name == 'Width':
 			mod[item.identifier] = width
-		elif item.name == 'Resolution':
+		elif item.name == 'Smoothing':
 			mod[item.identifier] = resolution
+		elif item.name == 'Profile':
+			mod[item.identifier] = profile
 
 	# Material
 	mat = _get_or_create_route_material()
@@ -419,10 +495,20 @@ class IMPORTGIS_OT_gpx_file(Operator):
 		default=True,
 	)
 
+	routeProfile: EnumProperty(
+		name="Profile",
+		description="Shape of the route geometry",
+		items=[
+			('FLAT', "Flat Band", "Flat ribbon on the surface"),
+			('TUBE', "Tube", "Round tube/pipe"),
+		],
+		default='FLAT',
+	)
+
 	routeWidth: FloatProperty(
 		name="Route width (m)",
 		description="Width of the route geometry in meters (0 = edges only, no mesh conversion)",
-		default=3.0,
+		default=5.0,
 		min=0.0,
 		max=100.0,
 	)
@@ -457,6 +543,7 @@ class IMPORTGIS_OT_gpx_file(Operator):
 		layout.separator()
 		layout.prop(self, 'useElevation')
 		layout.prop(self, 'separate')
+		layout.prop(self, 'routeProfile')
 		layout.prop(self, 'routeWidth')
 		layout.prop(self, 'curveResolution')
 		layout.prop(self, 'snapToTerrain')
@@ -543,6 +630,9 @@ class IMPORTGIS_OT_gpx_file(Operator):
 
 		created_objects = []
 
+		# --- Profile enum → int -------------------------------------------------
+		profile_int = 1 if self.routeProfile == 'TUBE' else 0
+
 		# --- Find terrain mesh for snap -----------------------------------------
 		terrain_obj = None
 		if self.snapToTerrain:
@@ -587,9 +677,9 @@ class IMPORTGIS_OT_gpx_file(Operator):
 
 			# Apply terrain snap + route width GN
 			if self.routeWidth > 0:
-				_apply_route_geonodes(obj, self.routeWidth, self.curveResolution, terrain_obj)
+				_apply_route_geonodes(obj, self.routeWidth, self.curveResolution, profile_int, terrain_obj)
 			elif terrain_obj is not None:
-				_apply_route_geonodes(obj, 0, self.curveResolution, terrain_obj)
+				_apply_route_geonodes(obj, 0, self.curveResolution, profile_int, terrain_obj)
 
 			return obj
 
@@ -640,9 +730,9 @@ class IMPORTGIS_OT_gpx_file(Operator):
 					trk_col.objects.link(obj)
 					obj.select_set(True)
 					if self.routeWidth > 0:
-						_apply_route_geonodes(obj, self.routeWidth, self.curveResolution, terrain_obj)
+						_apply_route_geonodes(obj, self.routeWidth, self.curveResolution, profile_int, terrain_obj)
 					elif terrain_obj is not None:
-						_apply_route_geonodes(obj, 0, self.curveResolution, terrain_obj)
+						_apply_route_geonodes(obj, 0, self.curveResolution, profile_int, terrain_obj)
 					created_objects.append(obj)
 				merged_bm.free()
 
@@ -686,9 +776,9 @@ class IMPORTGIS_OT_gpx_file(Operator):
 					rte_col.objects.link(obj)
 					obj.select_set(True)
 					if self.routeWidth > 0:
-						_apply_route_geonodes(obj, self.routeWidth, self.curveResolution, terrain_obj)
+						_apply_route_geonodes(obj, self.routeWidth, self.curveResolution, profile_int, terrain_obj)
 					elif terrain_obj is not None:
-						_apply_route_geonodes(obj, 0, self.curveResolution, terrain_obj)
+						_apply_route_geonodes(obj, 0, self.curveResolution, profile_int, terrain_obj)
 					created_objects.append(obj)
 				merged_bm.free()
 
