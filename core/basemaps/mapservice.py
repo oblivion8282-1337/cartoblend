@@ -81,7 +81,7 @@ class CDSEAuth():
 			if self._client_id and self._client_secret:
 				log.debug("CDSE credentials loaded successfully")
 			else:
-				log.warning("CDSE credentials empty — set them in BlenderGIS Preferences")
+				log.warning("CDSE credentials empty — set them in CartoBlend Preferences")
 		except Exception as e:
 			log.error("Failed to load CDSE credentials: {}".format(e))
 
@@ -93,7 +93,7 @@ class CDSEAuth():
 
 			client_id, client_secret = self._client_id, self._client_secret
 			if not client_id or not client_secret:
-				log.error("CDSE credentials not configured. Set them in BlenderGIS Preferences.")
+				log.error("CDSE credentials not configured. Set them in CartoBlend Preferences.")
 				return None
 
 			try:

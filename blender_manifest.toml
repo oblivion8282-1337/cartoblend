@@ -1,0 +1,25 @@
+schema_version = "1.0.0"
+id = "cartoblend"
+version = "3.0.0"
+name = "CartoBlend"
+tagline = "GIS toolkit for Blender — basemaps, OSM, DEM, GPX and more"
+maintainer = "oblivion"
+type = "add-on"
+website = "https://github.com/oblivion8282-1337/BlenderGIS-fork"
+
+tags = ["3D View", "Import-Export", "Scene"]
+
+blender_version_min = "4.2.0"
+
+license = [
+  "SPDX:GPL-3.0-or-later",
+]
+
+copyright = [
+  "2024-2026 oblivion",
+  "2014-2023 domlysz",
+]
+
+[permissions]
+network = "Download map tiles, OSM data, and elevation data from web services"
+files = "Import/export geodata files and cache map tiles"
