@@ -220,47 +220,45 @@ class VIEW3D_PT_gis_map(bpy.types.Panel):
 		if BASEMAPS:
 			layout.prop(context.scene.gis_basemap, 'src', text='Source')
 			layout.prop(context.scene.gis_basemap, 'lay', text='Layer')
+			# Search
 			row = layout.row(align=True)
-			row.operator("view3d.map_start", icon_value=icons_dict["layers"].icon_id, text="Start")
-			sub = row.row(align=True)
-			sub.operator("view3d.map_resume", icon='LOOP_FORWARDS', text="Resume")
-			sub.enabled = bpy.ops.view3d.map_resume.poll() if hasattr(bpy.ops.view3d, 'map_resume') else False
-
-# GEOSCENE_PT_georef is registered as sub-panel (bl_parent_id) via geoscene.py
-
-class VIEW3D_PT_gis_search(bpy.types.Panel):
-	bl_label = "Search"
-	bl_idname = "VIEW3D_PT_gis_search"
-	bl_space_type = 'VIEW_3D'
-	bl_region_type = 'UI'
-	bl_category = 'GIS'
-	bl_parent_id = "VIEW3D_PT_gis_map"
-	bl_order = 1
-
-	def draw(self, context):
-		layout = self.layout
-		row = layout.row(align=True)
-		row.prop(context.scene, 'gis_goto_query', text='')
-		row.operator("view3d.map_goto", icon='PLAY', text="")
-		if context.scene.gis_goto_result:
-			box = layout.box()
-			col = box.column(align=True)
-			name = context.scene.gis_goto_result
-			parts = [p.strip() for p in name.split(',')]
-			if parts:
-				col.label(text=parts[0], icon='PINNED')
-			if len(parts) > 1:
-				col.label(text=', '.join(parts[1:]))
-		import sys
-		_mv = sys.modules.get(__package__ + '.operators.view3d_mapviewer')
-		if _mv:
-			_hist = getattr(_mv, '_search_history', [])
-			if _hist:
-				col = layout.column(align=True)
-				col.label(text="Recent:", icon='TIME')
-				for i, q in enumerate(_hist[:5]):
-					op = col.operator("view3d.map_goto_history", text=q, icon='DOT')
-					op.index = i
+			row.prop(context.scene, 'gis_goto_query', text='')
+			row.operator("view3d.map_goto", icon='VIEWZOOM', text="")
+			if context.scene.gis_goto_result:
+				box = layout.box()
+				col = box.column(align=True)
+				name = context.scene.gis_goto_result
+				parts = [p.strip() for p in name.split(',')]
+				if parts:
+					col.label(text=parts[0], icon='PINNED')
+				if len(parts) > 1:
+					col.label(text=', '.join(parts[1:]))
+			import sys
+			_mv = sys.modules.get(__package__ + '.operators.view3d_mapviewer')
+			if _mv:
+				_hist = getattr(_mv, '_search_history', [])
+				if _hist:
+					col = layout.column(align=True)
+					col.label(text="Recent:", icon='TIME')
+					for i, q in enumerate(_hist[:5]):
+						op = col.operator("view3d.map_goto_history", text=q, icon='DOT')
+						op.index = i
+			# Start / Resume / Export — context-dependent
+			import sys
+			_mv2 = sys.modules.get(__package__ + '.operators.view3d_mapviewer')
+			viewer_active = _mv2 and getattr(_mv2, '_map_viewer_active', False)
+			if viewer_active:
+				layout.operator("view3d.map_export", icon='CHECKMARK', text="Export as Mesh")
+				row = layout.row(align=True)
+				_locked = _mv2 and getattr(_mv2, '_zoom_locked', False)
+				row.operator("view3d.map_lock_zoom", icon='LOCKED' if _locked else 'UNLOCKED', text="Lock Zoom", depress=_locked)
+				row.operator("view3d.map_exit", icon='PANEL_CLOSE', text="Exit")
+			else:
+				row = layout.row(align=True)
+				row.operator("view3d.map_start", icon_value=icons_dict["layers"].icon_id, text="Start")
+				sub = row.row(align=True)
+				sub.operator("view3d.map_resume", icon='LOOP_FORWARDS', text="Resume")
+				sub.enabled = bpy.ops.view3d.map_resume.poll() if hasattr(bpy.ops.view3d, 'map_resume') else False
 
 # ─── Scene ────────────────────────────────────────────────
 
@@ -458,7 +456,6 @@ class VIEW3D_PT_gis_shortcuts(bpy.types.Panel):
 
 panels = [
 	VIEW3D_PT_gis_map,
-	VIEW3D_PT_gis_search,
 	VIEW3D_PT_gis_scene,
 	VIEW3D_PT_gis_import,
 	VIEW3D_PT_gis_export,

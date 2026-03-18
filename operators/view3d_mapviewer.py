@@ -72,6 +72,18 @@ _last_map_grd = None
 #Flag: N-Panel "Go" button was clicked while map viewer is running
 _goto_pending = False
 
+#Flag: N-Panel "Export" button was clicked while map viewer is running
+_export_pending = False
+
+#Flag: N-Panel "Exit" button was clicked while map viewer is running
+_exit_pending = False
+
+#Flag: N-Panel "Lock Zoom" toggle was clicked
+_lock_zoom_pending = False
+
+#State: whether zoom is currently locked (for N-Panel display)
+_zoom_locked = False
+
 #Info overlay data — updated by operator, read by persistent draw handler
 _overlay_zoom = 0
 _overlay_lat = 0.0
@@ -700,12 +712,12 @@ class VIEW3D_OT_map_start(Operator):
 		if self.dialog == 'MAP':
 			grdCRS = GRIDS[self.grd]['CRS']
 			if geoscn.isBroken:
-				self.report({'ERROR'}, "Scene georef is broken, please fix it beforehand")
-				return {'CANCELLED'}
-			#set scene crs as grid crs
-			#if not geoscn.hasCRS:
-				#geoscn.crs = grdCRS
-			#Check if raster reproj is needed
+				# Auto-fix: set CRS to grid CRS if missing
+				if not geoscn.hasCRS:
+					geoscn.crs = grdCRS
+					log.info(f"Auto-set CRS to {grdCRS}")
+			if not geoscn.hasCRS:
+				geoscn.crs = grdCRS
 			if geoscn.hasCRS and geoscn.crs != grdCRS and not HAS_GDAL:
 				self.report({'ERROR'}, "Please install gdal to enable raster reprojection support")
 				return {'CANCELLED'}
@@ -853,8 +865,9 @@ class VIEW3D_OT_map_viewer(Operator):
 
 	def _cleanup_modal(self, context):
 		"""Remove draw handlers, timer, header text and deactivate map viewer."""
-		global _map_viewer_active
+		global _map_viewer_active, _zoom_locked
 		_map_viewer_active = False
+		_zoom_locked = False
 		self.map.stop()
 		bpy.types.SpaceView3D.draw_handler_remove(self._drawTextHandler, 'WINDOW')
 		bpy.types.SpaceView3D.draw_handler_remove(self._drawZoomBoxHandler, 'WINDOW')
@@ -904,7 +917,7 @@ class VIEW3D_OT_map_viewer(Operator):
 		return {'FINISHED'}
 
 	def modal(self, context, event):
-		global _map_viewer_active, _goto_pending
+		global _map_viewer_active, _goto_pending, _export_pending, _exit_pending, _lock_zoom_pending, _zoom_locked
 
 		context.area.tag_redraw()
 		scn = bpy.context.scene
@@ -916,6 +929,29 @@ class VIEW3D_OT_map_viewer(Operator):
 			if _goto_pending:
 				_goto_pending = False
 				self.map.get()
+			#Check if N-Panel "Export" button was clicked
+			if _export_pending:
+				_export_pending = False
+				if not self.map.srv.running and self.map.mosaic is not None:
+					return self._do_export(context)
+				else:
+					self.progress = 'Tiles still loading, please wait…'
+			#Check if N-Panel "Lock Zoom" was toggled
+			if _lock_zoom_pending:
+				_lock_zoom_pending = False
+				if self.map.lockedZoom is None:
+					self.map.lockedZoom = self.map.zoom
+					_zoom_locked = True
+				else:
+					self.map.lockedZoom = None
+					_zoom_locked = False
+					self.map.get()
+			#Check if N-Panel "Exit" was clicked
+			if _exit_pending:
+				_exit_pending = False
+				self._cleanup_modal(context)
+				_zoom_locked = False
+				return {'CANCELLED'}
 			return {'PASS_THROUGH'}
 
 		#Pass through events when mouse is over sidebar or toolbar
@@ -1192,8 +1228,10 @@ class VIEW3D_OT_map_viewer(Operator):
 		if event.type == 'L' and event.value == 'PRESS':
 			if self.map.lockedZoom is None:
 				self.map.lockedZoom = self.map.zoom
+				_zoom_locked = True
 			else:
 				self.map.lockedZoom = None
+				_zoom_locked = False
 				self.map.get()
 
 
@@ -1485,6 +1523,60 @@ class VIEW3D_OT_map_resume(bpy.types.Operator):
 		return {'FINISHED'}
 
 
+class VIEW3D_OT_map_export(bpy.types.Operator):
+	"""Export current basemap view as textured mesh"""
+
+	bl_idname = "view3d.map_export"
+	bl_label = "Export as Mesh"
+	bl_description = 'Export current basemap tiles as a textured mesh'
+	bl_options = {'INTERNAL'}
+
+	@classmethod
+	def poll(cls, context):
+		return _map_viewer_active
+
+	def execute(self, context):
+		global _export_pending
+		_export_pending = True
+		return {'FINISHED'}
+
+
+class VIEW3D_OT_map_lock_zoom(bpy.types.Operator):
+	"""Toggle zoom level lock"""
+
+	bl_idname = "view3d.map_lock_zoom"
+	bl_label = "Lock Zoom"
+	bl_description = 'Lock/unlock the current zoom level'
+	bl_options = {'INTERNAL'}
+
+	@classmethod
+	def poll(cls, context):
+		return _map_viewer_active
+
+	def execute(self, context):
+		global _lock_zoom_pending
+		_lock_zoom_pending = True
+		return {'FINISHED'}
+
+
+class VIEW3D_OT_map_exit(bpy.types.Operator):
+	"""Exit the map viewer"""
+
+	bl_idname = "view3d.map_exit"
+	bl_label = "Exit"
+	bl_description = 'Exit the map viewer'
+	bl_options = {'INTERNAL'}
+
+	@classmethod
+	def poll(cls, context):
+		return _map_viewer_active
+
+	def execute(self, context):
+		global _exit_pending
+		_exit_pending = True
+		return {'FINISHED'}
+
+
 classes = [
 	VIEW3D_OT_map_start,
 	VIEW3D_OT_map_viewer,
@@ -1492,7 +1584,10 @@ classes = [
 	VIEW3D_OT_map_search_results,
 	VIEW3D_OT_map_goto,
 	VIEW3D_OT_map_goto_history,
-	VIEW3D_OT_map_resume
+	VIEW3D_OT_map_resume,
+	VIEW3D_OT_map_export,
+	VIEW3D_OT_map_lock_zoom,
+	VIEW3D_OT_map_exit,
 ]
 
 def register():
@@ -1507,10 +1602,14 @@ def register():
 			bpy.utils.unregister_class(cls)
 			bpy.utils.register_class(cls)
 	# Scene properties for inline "Go to Location" input in N-Panel
+	def _on_goto_query_confirm(self, context):
+		if self.gis_goto_query.strip():
+			bpy.ops.view3d.map_goto('EXEC_DEFAULT')
 	bpy.types.Scene.gis_goto_query = StringProperty(
 		name="Location",
 		description="Search for a place name or address",
-		default=""
+		default="",
+		update=_on_goto_query_confirm
 	)
 	bpy.types.Scene.gis_goto_result = StringProperty(
 		name="Result",
