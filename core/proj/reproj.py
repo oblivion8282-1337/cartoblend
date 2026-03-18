@@ -172,8 +172,12 @@ def reprojImg(crs1, crs2, ds1, out_ul=None, out_size=None, out_res=None, sqPx=Fa
 	# Warp options (http://www.gdal.org/structGDALWarpOptions.html)
 	opt = ['NUM_THREADS=ALL_CPUS, SAMPLE_GRID=YES']
 	#option parameters available since gdal 2.1
-	a, b, c = gdal.__version__.split('.', 2)
-	if (int(a) == 2 and int(b) >=1) or int(a) > 2:
+	try:
+		a, b, c = gdal.__version__.split('.', 2)
+		use_new_api = (int(a) == 2 and int(b) >= 1) or int(a) > 2
+	except (ValueError, AttributeError):
+		use_new_api = True  # assume modern GDAL
+	if use_new_api:
 		gdal.ReprojectImage(ds1, ds2, wkt1, wkt2, alg, memLimit, threshold, options=opt)
 	else:
 		gdal.ReprojectImage(ds1, ds2, wkt1, wkt2, alg, memLimit, threshold)

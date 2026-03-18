@@ -5,7 +5,6 @@ import os
 import string
 import bpy
 import math
-import string
 
 import logging
 log = logging.getLogger(__name__)
@@ -251,18 +250,19 @@ class IMPORTGIS_OT_ascii_grid(Operator, ImportHelper):
 
                 for x in range(0, ncols, step):
                     # TODO: exclude nodata values (implications for face generation)
-                    if not (self.importMode == 'CLOUD' and coldata[x] == nodata):
+                    try:
+                        val = float(coldata[x])
+                    except ValueError:
+                        log.error('Value "{val}" in row {row}, column {col} could not be converted to a float.'.format(val=coldata[x], row=nrows-y, col=x))
+                        self.report({'ERROR'}, 'Cannot convert value to float')
+                        return {'CANCELLED'}
+                    if not (self.importMode == 'CLOUD' and val == nodata):
                         pt = (x * cellsize + offset.x, y * cellsize + offset.y)
                         if rprj:
                             # reproject world-space source coordinate, then transform back to target local-space
                             pt = rprjToScene.pt(pt[0] + reprojection['from'].x, pt[1] + reprojection['from'].y)
                             pt = (pt[0] - reprojection['to'].x, pt[1] - reprojection['to'].y)
-                        try:
-                            vertices.append(pt + (float(coldata[x]),))
-                        except ValueError as e:
-                            log.error('Value "{val}" in row {row}, column {col} could not be converted to a float.'.format(val=coldata[x], row=nrows-y, col=x))
-                            self.report({'ERROR'}, 'Cannot convert value to float')
-                            return {'CANCELLED'}
+                        vertices.append(pt + (val,))
 
         if self.importMode == 'MESH':
             step_ncols = math.ceil(ncols / step)

@@ -168,7 +168,7 @@ def register():
 	try:
 		bpy.utils.register_class(IMPORTGIS_OT_dem_query)
 	except ValueError as e:
-		log.warning('{} is already registered, now unregister and retry... '.format(IMPORTGIS_OT_srtm_query))
+		log.warning('{} is already registered, now unregister and retry... '.format(IMPORTGIS_OT_dem_query))
 		unregister()
 		bpy.utils.register_class(IMPORTGIS_OT_dem_query)
 

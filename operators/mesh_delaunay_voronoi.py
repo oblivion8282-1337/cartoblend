@@ -112,7 +112,7 @@ class OBJECT_OT_tesselation_delaunay(bpy.types.Operator):
 			log.info("Create mesh...")
 			tinMesh = bpy.data.meshes.new("TIN") #create a new mesh
 			tinMesh.from_pydata(verts, [], faces) #Fill the mesh with triangles
-			tinMesh.update(calc_edges=True) #Update mesh with new data
+			tinMesh.update() #Update mesh with new data
 
 		#Create an object with that mesh
 		tinObj = bpy.data.objects.new("TIN", tinMesh)
@@ -199,7 +199,7 @@ class OBJECT_OT_tesselation_voronoi(bpy.types.Operator):
 			voronoiDiagram.from_pydata(pts, edgesIdx, []) #Fill the mesh with triangles
 		else:
 			voronoiDiagram.from_pydata(pts, [], list(polyIdx.values())) #Fill the mesh with triangles
-		voronoiDiagram.update(calc_edges=True) #Update mesh with new data
+		voronoiDiagram.update() #Update mesh with new data
 		#create an object with that mesh
 		voronoiObj = bpy.data.objects.new("VoronoiDiagram", voronoiDiagram)
 		#place object

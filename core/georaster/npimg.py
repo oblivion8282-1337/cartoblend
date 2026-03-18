@@ -442,7 +442,7 @@ class NpImage():
 		if self.IFACE == 'GDAL':
 			# gdal.FillNodata need a band object to apply on
 			# so we create a memory datasource (1 band, float)
-			height, width = self.data.shape
+			height, width = self.data.shape[0], self.data.shape[1]
 			ds = gdal.GetDriverByName('MEM').Create('', width, height, 1, gdal.GetDataTypeByName('float32'))
 			b = ds.GetRasterBand(1)
 			b.SetNoDataValue(self.noData)

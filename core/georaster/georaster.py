@@ -243,6 +243,8 @@ class GeoRaster():
 
 	def toGDAL(self):
 		'''Get GDAL dataset'''
+		if not HAS_GDAL:
+			raise ImportError("GDAL required for toGDAL()")
 		return gdal.Open(self.path, gdal.GA_ReadOnly)
 
 	def readAsNpArray(self, subset=True):

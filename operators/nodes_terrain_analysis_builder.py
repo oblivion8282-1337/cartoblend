@@ -60,21 +60,20 @@ class TERRAIN_ANALYSIS_OT_build_nodes(Operator):
 		   #groupsTree.remove(groupsTree['Normalize'])
 			scaleNodesGroupTree = groupsTree['Normalize']
 			scaleNodesGroupTree.nodes.clear()
-			scaleNodesGroupTree.inputs.clear()
-			scaleNodesGroupTree.outputs.clear()
+			scaleNodesGroupTree.interface.clear()
 		else:
 			scaleNodesGroupTree = groupsTree.new('Normalize', 'ShaderNodeTree') # = bpy.types.node_tree
 		scaleNodesGroupName = scaleNodesGroupTree.name #Normalize.001 if normalize already exists
 		#  group inputs
 		scaleInputsNode = scaleNodesGroupTree.nodes.new('NodeGroupInput')
 		scaleInputsNode.location = (-350,0)
-		scaleNodesGroupTree.inputs.new('NodeSocketFloat','val')
-		scaleNodesGroupTree.inputs.new('NodeSocketFloat','min')
-		scaleNodesGroupTree.inputs.new('NodeSocketFloat','max')
+		scaleNodesGroupTree.interface.new_socket(name='val', in_out='INPUT', socket_type='NodeSocketFloat')
+		scaleNodesGroupTree.interface.new_socket(name='min', in_out='INPUT', socket_type='NodeSocketFloat')
+		scaleNodesGroupTree.interface.new_socket(name='max', in_out='INPUT', socket_type='NodeSocketFloat')
 		#  group outputs
 		scaleOutputsNode = scaleNodesGroupTree.nodes.new('NodeGroupOutput')
 		scaleOutputsNode.location = (300,0)
-		scaleNodesGroupTree.outputs.new('NodeSocketFloat','val')
+		scaleNodesGroupTree.interface.new_socket(name='val', in_out='OUTPUT', socket_type='NodeSocketFloat')
 		#  create 3 math nodes in a group
 		subtractNode1 = scaleNodesGroupTree.nodes.new('ShaderNodeMath')
 		subtractNode1.operation = 'SUBTRACT'

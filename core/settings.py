@@ -1,8 +1,11 @@
 # -*- coding:utf-8 -*-
 import os
 import json
+import logging
 
 from .checkdeps import HAS_GDAL, HAS_PYPROJ, HAS_IMGIO, HAS_PIL
+
+log = logging.getLogger(__name__)
 
 def getAvailableProjEngines():
 	engines = ['AUTO', 'BUILTIN']
@@ -61,7 +64,14 @@ class Settings():
 
 cfgFile = os.path.join(os.path.dirname(__file__), "settings.json")
 
-with open(cfgFile, 'r') as cfg:
+try:
+	with open(cfgFile, 'r') as cfg:
 		prefs = json.load(cfg)
-
-settings = Settings(**prefs)
+	settings = Settings(**prefs)
+except (FileNotFoundError, json.JSONDecodeError, KeyError) as e:
+	log.warning('Cannot load settings: %s', e)
+	settings = Settings(
+		proj_engine='AUTO',
+		img_engine='AUTO',
+		user_agent='CartoBlend'
+	)

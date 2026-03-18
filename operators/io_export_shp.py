@@ -258,9 +258,8 @@ class EXPORTGIS_OT_shapefile(Operator, ExportHelper):
 
 		if wkt is not None:
 			prjPath = os.path.splitext(filePath)[0] + '.prj'
-			prj = open(prjPath, "w")
-			prj.write(wkt)
-			prj.close()
+			with open(prjPath, "w") as prj:
+				prj.write(wkt)
 
 		self.report({'INFO'}, "Export complete")
 

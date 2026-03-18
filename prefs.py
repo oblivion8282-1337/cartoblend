@@ -148,7 +148,7 @@ class BGIS_OT_pref_show(Operator):
 	def execute(self, context):
 		addon_utils.modules_refresh()
 		context.preferences.active_section = 'ADDONS'
-		bpy.data.window_managers["WinMan"].addon_search = bl_info['name']
+		bpy.context.window_manager.addon_search = bl_info['name']
 		try:
 			mod = addon_utils.addons_fake_modules.get(PKG)
 			if mod:
@@ -168,7 +168,10 @@ class BGIS_PREFS(AddonPreferences):
 	#Predefined Spatial Ref. Systems
 
 	def listPredefCRS(self, context):
-		return [tuple(elem) for elem in json.loads(self.predefCrsJson)]
+		try:
+			return [tuple(elem) for elem in json.loads(self.predefCrsJson)]
+		except (json.JSONDecodeError, TypeError):
+			return [('NONE', 'Error loading data', '')]
 
 	#store crs preset as json string into addon preferences
 	predefCrsJson: StringProperty(default=json.dumps(DEFAULT_CRS))
@@ -234,10 +237,13 @@ class BGIS_PREFS(AddonPreferences):
 	osmTagsJson: StringProperty(default=json.dumps(DEFAULT_OSM_TAGS)) #just a serialized list of tags
 
 	def listOsmTags(self, context):
-		prefs = context.preferences.addons[PKG].preferences
-		tags = json.loads(prefs.osmTagsJson)
-		#put each item in a tuple (key, label, tooltip)
-		return [ (tag, tag, tag) for tag in tags]
+		try:
+			prefs = context.preferences.addons[PKG].preferences
+			tags = json.loads(prefs.osmTagsJson)
+			#put each item in a tuple (key, label, tooltip)
+			return [ (tag, tag, tag) for tag in tags]
+		except (json.JSONDecodeError, TypeError):
+			return [('NONE', 'Error loading data', '')]
 
 	osmTags: EnumProperty(
 		name = "OSM tags",
@@ -276,7 +282,10 @@ class BGIS_PREFS(AddonPreferences):
 	#Network
 
 	def listOverpassServer(self, context):
-		return [tuple(entry) for entry in json.loads(self.overpassServerJson)]
+		try:
+			return [tuple(entry) for entry in json.loads(self.overpassServerJson)]
+		except (json.JSONDecodeError, TypeError):
+			return [('NONE', 'Error loading data', '')]
 
 	#store crs preset as json string into addon preferences
 	overpassServerJson: StringProperty(default=json.dumps(DEFAULT_OVERPASS_SERVER))
@@ -289,7 +298,10 @@ class BGIS_PREFS(AddonPreferences):
 		)
 
 	def listDemServer(self, context):
-		return [tuple(entry) for entry in json.loads(self.demServerJson)]
+		try:
+			return [tuple(entry) for entry in json.loads(self.demServerJson)]
+		except (json.JSONDecodeError, TypeError):
+			return [('NONE', 'Error loading data', '')]
 
 	#store crs preset as json string into addon preferences
 	demServerJson: StringProperty(default=json.dumps(DEFAULT_DEM_SERVER))
@@ -559,11 +571,11 @@ class BGIS_OT_add_predef_crs(Operator):
 		#layout.prop(self, 'save') #sincce Blender2.8 prefs are autosaved
 
 	def execute(self, context):
+		if self.crs.isdigit():
+			self.crs = 'EPSG:' + self.crs
 		if not SRS.validate(self.crs):
 			self.report({'ERROR'}, 'Invalid CRS')
 			return {'CANCELLED'}
-		if self.crs.isdigit():
-			self.crs = 'EPSG:' + self.crs
 		#append the new crs def to json string
 		prefs = context.preferences.addons[PKG].preferences
 		data = json.loads(prefs.predefCrsJson)
@@ -627,7 +639,11 @@ class BGIS_OT_edit_predef_crs(Operator):
 		if key == '':
 			return {'CANCELLED'}
 		data = json.loads(prefs.predefCrsJson)
-		entry = [entry for entry in data if entry[0] == key][0]
+		matches = [entry for entry in data if entry[0] == key]
+		if not matches:
+			self.report({'ERROR'}, 'Entry not found')
+			return {'CANCELLED'}
+		entry = matches[0]
 		self.crs, self.name, self.desc = entry
 		return context.window_manager.invoke_props_dialog(self)
 
@@ -810,7 +826,11 @@ class BGIS_OT_edit_dem_server(Operator):
 		if key == '':
 			return {'CANCELLED'}
 		data = json.loads(prefs.demServerJson)
-		entry = [entry for entry in data if entry[0] == key][0]
+		matches = [entry for entry in data if entry[0] == key]
+		if not matches:
+			self.report({'ERROR'}, 'Entry not found')
+			return {'CANCELLED'}
+		entry = matches[0]
 		self.url, self.name, self.desc = entry
 		return context.window_manager.invoke_props_dialog(self)
 
@@ -943,7 +963,11 @@ class BGIS_OT_edit_overpass_server(Operator):
 		if key == '':
 			return {'CANCELLED'}
 		data = json.loads(prefs.overpassServerJson)
-		entry = [entry for entry in data if entry[0] == key][0]
+		matches = [entry for entry in data if entry[0] == key]
+		if not matches:
+			self.report({'ERROR'}, 'Entry not found')
+			return {'CANCELLED'}
+		entry = matches[0]
 		self.url, self.name, self.desc = entry
 		return context.window_manager.invoke_props_dialog(self)
 

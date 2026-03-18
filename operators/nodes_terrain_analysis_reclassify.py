@@ -112,7 +112,7 @@ def populateList(colorRampNode):
 #Set others properties in scene and their update functions
 #########################################
 def updateAnalysisMode(scn, context):
-	if context.space_data.type == 'NODE_EDITOR':
+	if context.space_data is not None and context.space_data.type == 'NODE_EDITOR':
 		#refresh
 		node = context.active_node
 		populateList(node)
@@ -442,17 +442,17 @@ def getValues():
 	elif mode == 'SLOPE':
 		z = Vector((0,0,1))
 		m = obj.matrix_world
-		values =  [math.degrees(z.angle(m * face.normal)) for face in mesh.polygons]
+		values =  [math.degrees(z.angle(m @ face.normal)) for face in mesh.polygons]
 	elif mode == 'ASPECT':
 		y = Vector((0,1,0))
 		m = obj.matrix_world
-		#values =  [math.degrees(y.angle(m * face.normal)) for face in mesh.polygons]
+		#values =  [math.degrees(y.angle(m @ face.normal)) for face in mesh.polygons]
 		values = []
 		for face in mesh.polygons:
 			normal = face.normal.copy()
 			normal.z = 0 #project vector into XY plane
 			try:
-				a = math.degrees(y.angle(m * normal))
+				a = math.degrees(y.angle(m @ normal))
 			except ValueError:
 				pass#zero length vector as no angle
 			else:
@@ -991,7 +991,10 @@ def unregister():
 	del bpy.types.Scene.uiListIndex
 	del bpy.types.Scene.colorRampPreview
 	#Clear handlers
-	bpy.app.handlers.depsgraph_update_post.clear()
+	try:
+		bpy.app.handlers.depsgraph_update_post.remove(scene_update)
+	except ValueError:
+		pass
 	#Unregister
 	for cls in classes:
 		bpy.utils.unregister_class(cls)

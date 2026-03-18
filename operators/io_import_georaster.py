@@ -248,7 +248,7 @@ class IMPORTGIS_OT_georaster(Operator, ImportHelper):
 
 		#Path
 		filePath = self.filepath
-		name = os.path.basename(filePath)[:-4]
+		name = os.path.splitext(os.path.basename(filePath))[0]
 
 		######################################
 		if self.importMode == 'PLANE':#on plane
@@ -310,7 +310,7 @@ class IMPORTGIS_OT_georaster(Operator, ImportHelper):
 				geoscn.setOriginPrj(dx, dy)
 				offx, offy = 0, 0
 
-			bkg = bpy.data.objects.new(self.name, None) #None will create an empty
+			bkg = bpy.data.objects.new(name, None) #None will create an empty
 			bkg.empty_display_type = 'IMAGE'
 			bkg.empty_image_depth = 'BACK'
 			bkg.data = rast.bpyImg

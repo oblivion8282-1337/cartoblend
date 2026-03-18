@@ -332,7 +332,7 @@ class bpyGeoRaster(GeoRaster):
 		# Make a first Numpy array in one dimension
 		a = np.array(self.bpyImg.pixels[:])#[r,g,b,a,r,g,b,a,r,g,b,a, ... ] counting from bottom to up and left to right
 		# Regroup rgba values
-		a = a.reshape(len(a)/nbBands, nbBands)#[[r,g,b,a],[r,g,b,a],[r,g,b,a],[r,g,b,a]...]
+		a = a.reshape(len(a)//nbBands, nbBands)#[[r,g,b,a],[r,g,b,a],[r,g,b,a],[r,g,b,a]...]
 		# Build 2 dimensional array (In numpy first dimension represents rows (y) and second dimension represents cols (x))
 		a = a.reshape(self.size.y, self.size.x, nbBands)# [ [[rgba], [rgba]...], [lines2], [lines3]...]
 		# Change origin to top left

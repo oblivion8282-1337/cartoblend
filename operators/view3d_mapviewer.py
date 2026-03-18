@@ -168,6 +168,7 @@ class BaseMap(GeoScene):
 		#Background image attributes
 		self.img = None #bpy image
 		self.bkg = None #empty image obj
+		self.mosaic = None #tiled mosaic raster (set after first successful run)
 		self.viewDstZ = None #view 3d z distance
 		#Store previous request
 		#TODO
@@ -884,6 +885,8 @@ class VIEW3D_OT_map_viewer(Operator):
 
 	def _do_export(self, context):
 		"""Export current basemap tiles as textured mesh."""
+		if self.map.bkg is None:
+			return
 		self._cleanup_modal(context)
 		self.map.bkg.hide_viewport = True
 
@@ -995,9 +998,9 @@ class VIEW3D_OT_map_viewer(Operator):
 					context.region_data.view_distance -= dst * self.moveFactor
 					if self.prefs.zoomToMouse:
 						mouseLoc = mouseTo3d(context, event.mouse_region_x, event.mouse_region_y)
-						viewLoc = context.region_data.view_location
+						viewLoc = context.region_data.view_location.copy()
 						deltaVect = (mouseLoc - viewLoc) * self.moveFactor
-						viewLoc += deltaVect
+						context.region_data.view_location = viewLoc + deltaVect
 				else:
 					# map zoom up
 					if self.map.zoom < self.map.layer.zmax and self.map.zoom < self.map.tm.nbLevels-1:
@@ -1012,11 +1015,11 @@ class VIEW3D_OT_map_viewer(Operator):
 								dst2 = dst * resFactor
 								context.region_data.view_distance = dst2
 								mouseLoc = mouseTo3d(context, event.mouse_region_x, event.mouse_region_y)
-								viewLoc = context.region_data.view_location
+								viewLoc = context.region_data.view_location.copy()
 								moveFactor = (dst - dst2) / dst
 								deltaVect = (mouseLoc - viewLoc) * moveFactor
 								if self.prefs.lockOrigin:
-									viewLoc += deltaVect
+									context.region_data.view_location = viewLoc + deltaVect
 								else:
 									dx, dy, dz = deltaVect
 									if not self.prefs.lockObj and self.map.bkg is not None:
@@ -1046,9 +1049,9 @@ class VIEW3D_OT_map_viewer(Operator):
 					context.region_data.view_distance += dst * self.moveFactor
 					if self.prefs.zoomToMouse:
 						mouseLoc = mouseTo3d(context, event.mouse_region_x, event.mouse_region_y)
-						viewLoc = context.region_data.view_location
+						viewLoc = context.region_data.view_location.copy()
 						deltaVect = (mouseLoc - viewLoc) * self.moveFactor
-						viewLoc -= deltaVect
+						context.region_data.view_location = viewLoc - deltaVect
 				else:
 					#map zoom down
 					if self.map.zoom > self.map.layer.zmin and self.map.zoom > 0:
@@ -1063,11 +1066,11 @@ class VIEW3D_OT_map_viewer(Operator):
 								dst2 = dst * resFactor
 								context.region_data.view_distance = dst2
 								mouseLoc = mouseTo3d(context, event.mouse_region_x, event.mouse_region_y)
-								viewLoc = context.region_data.view_location
+								viewLoc = context.region_data.view_location.copy()
 								moveFactor = (dst - dst2) / dst
 								deltaVect = (mouseLoc - viewLoc) * moveFactor
 								if self.prefs.lockOrigin:
-									viewLoc += deltaVect
+									context.region_data.view_location = viewLoc + deltaVect
 								else:
 									dx, dy, dz = deltaVect
 									if not self.prefs.lockObj and self.map.bkg is not None:
@@ -1101,12 +1104,14 @@ class VIEW3D_OT_map_viewer(Operator):
 					#Move existing objects (only top level parent)
 					if self.updObjLoc:
 						topParents = [obj for obj in scn.objects if not obj.parent]
-						for i, obj in enumerate(topParents):
+						j = 0
+						for obj in topParents:
 							if obj == self.map.bkg: #the background empty used as basemap
 								continue
-							loc1 = self.objsLoc1[i]
+							loc1 = self.objsLoc1[j]
 							obj.location.x = loc1.x - dlt.x
 							obj.location.y = loc1.y - dlt.y
+							j += 1
 
 
 		if event.type in {'LEFTMOUSE', 'MIDDLEMOUSE'}:
@@ -1122,8 +1127,8 @@ class VIEW3D_OT_map_viewer(Operator):
 						if self.map.bkg is not None:
 							self.offx1 = self.map.bkg.location[0]
 							self.offy1 = self.map.bkg.location[1]
-						#Store current location of each objects (only top level parent)
-						self.objsLoc1 = [obj.location.copy() for obj in scn.objects if not obj.parent]
+						#Store current location of each objects (only top level parent, excluding bkg)
+						self.objsLoc1 = [obj.location.copy() for obj in scn.objects if not obj.parent and obj != self.map.bkg]
 				#Tag that map is currently draging
 				self.inMove = True
 
@@ -1192,6 +1197,8 @@ class VIEW3D_OT_map_viewer(Operator):
 
 		#NUMPAD MOVES (3D VIEW or MAP)
 		if event.value == 'PRESS' and event.type in ['NUMPAD_2', 'NUMPAD_4', 'NUMPAD_6', 'NUMPAD_8']:
+			if self.map.bkg is None:
+				return {'RUNNING_MODAL'}
 			delta = self.map.bkg.scale.x * self.moveFactor
 			if event.type == 'NUMPAD_4':
 				if event.ctrl or self.prefs.lockOrigin:
@@ -1217,20 +1224,20 @@ class VIEW3D_OT_map_viewer(Operator):
 				self.map.get()
 
 		#SWITCH LAYER
-		if event.type == 'SPACE':
+		if event.type == 'SPACE' and event.value == 'PRESS':
 			self._cleanup_modal(context)
 			self.restart = True
 			return {'FINISHED'}
 
 		#GO TO
-		if event.type == 'G':
+		if event.type == 'G' and event.value == 'PRESS':
 			self._cleanup_modal(context)
 			self.restart = True
 			self.dialog = 'SEARCH'
 			return {'FINISHED'}
 
 		#OPTIONS
-		if event.type == 'O':
+		if event.type == 'O' and event.value == 'PRESS':
 			self._cleanup_modal(context)
 			self.restart = True
 			self.dialog = 'OPTIONS'
@@ -1256,13 +1263,10 @@ class VIEW3D_OT_map_viewer(Operator):
 
 		#EXPORT
 		if event.type == 'E' and event.value == 'PRESS':
-			print(f"[BGIS DEBUG] E pressed: srv.running={self.map.srv.running}, mosaic={self.map.mosaic is not None}")
 			if self.map.srv.running or self.map.mosaic is None:
 				self.progress = 'Tiles still loading, please wait…'
-				print("[BGIS DEBUG] E blocked — tiles not ready")
 				return {'RUNNING_MODAL'}
 			else:
-				print("[BGIS DEBUG] E → _do_export()")
 				return self._do_export(context)
 
 		#EXIT

@@ -43,8 +43,8 @@ class MapTilerCoordinates():
 			if settings.maptiler_api_key:
 				self.apiKey = settings.maptiler_api_key
 			else:
-				raise ApiKeyError
 				log.error('Missing MapTilerCoordinates API key')
+				raise ApiKeyError
 		else:
 			self.apiKey = apiKey
 
@@ -73,7 +73,7 @@ class MapTilerCoordinates():
 			rq = Request(url, headers={'User-Agent': USER_AGENT})
 			response = urlopen(rq, timeout=REPROJ_TIMEOUT).read().decode('utf8')
 		except (URLError, HTTPError) as err:
-			log.error('Http request fails url:{}, code:{}, error:{}'.format(url, err.code, err.reason))
+			log.error('Http request fails url:{}, code:{}, error:{}'.format(url, getattr(err, 'code', 'N/A'), err.reason))
 			raise
 
 		obj = json.loads(response)['results'][0]
@@ -111,7 +111,7 @@ class MapTilerCoordinates():
 				rq = Request(url, headers={'User-Agent': USER_AGENT})
 				response = urlopen(rq, timeout=REPROJ_TIMEOUT).read().decode('utf8')
 			except (URLError, HTTPError) as err:
-				log.error('Http request fails url:{}, code:{}, error:{}'.format(url, err.code, err.reason))
+				log.error('Http request fails url:{}, code:{}, error:{}'.format(url, getattr(err, 'code', 'N/A'), err.reason))
 				raise
 
 			obj = json.loads(response)['results']

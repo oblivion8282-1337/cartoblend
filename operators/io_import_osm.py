@@ -636,7 +636,8 @@ def _apply_terrain_snap(obj, terrain_obj):
 			mod[item.identifier] = terrain_obj
 	# Move to top of modifier stack
 	while obj.modifiers.find(mod.name) > 0:
-		bpy.ops.object.modifier_move_up({'object': obj}, modifier=mod.name)
+		with bpy.context.temp_override(object=obj):
+			bpy.ops.object.modifier_move_up(modifier=mod.name)
 
 
 ########################
@@ -1068,9 +1069,13 @@ class OSM_IMPORT():
 
 		elif 'relation' in self.featureType:
 
+			osm_col = bpy.data.collections.get('OSM')
+			if osm_col is None:
+				osm_col = bpy.data.collections.new('OSM')
+				bpy.context.scene.collection.children.link(osm_col)
 			relations = bpy.data.collections.new('Relations')
-			bpy.data.collections['OSM'].children.link(relations)
-			importedObjects = bpy.data.collections['OSM'].objects
+			osm_col.children.link(relations)
+			importedObjects = osm_col.objects
 
 			for rel in result.relations:
 

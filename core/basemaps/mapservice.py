@@ -265,8 +265,8 @@ class TileMatrix():
 	def getRes(self, zoom):
 		"""Resolution (meters/pixel) for given zoom level (measured at Equator)"""
 		if hasattr(self, 'resolutions'):
-			if zoom > len(self.resolutions):
-				zoom = len(self.resolutions)
+			if zoom >= len(self.resolutions):
+				zoom = len(self.resolutions) - 1
 			return self.resolutions[zoom]
 		else:
 			return self.initRes / self.resFactor**zoom
@@ -1073,14 +1073,14 @@ class MapService():
 		Tiles are downloaded from map service or directly pick up from cache database.
 		"""
 		#seed the cache
-		self.seedTiles(laykey, tiles, toDstGrid=toDstGrid, nbThread=10, cpt=cpt)
+		self.seedTiles(laykey, tiles, toDstGrid=toDstGrid, nbThread=nbThread, cpt=cpt)
 		#request the cache and return
 		cache = self.getCache(laykey, toDstGrid)
 		return cache.getTiles(tiles) #[(x,y,z,data)]
 
 
 	def getTile(self, laykey, col, row, zoom, toDstGrid=True):
-		return self.getTiles(laykey, [col, row, zoom], toDstGrid)[0]
+		return self.getTiles(laykey, [(col, row, zoom)], toDstGrid)[0]
 
 
 	def bboxRequest(self, bbox, zoom, dstGrid=True):
@@ -1099,7 +1099,7 @@ class MapService():
 			rq = BBoxRequestMZ(tm, bbox, zoom)
 		else:
 			rq = BBoxRequest(tm, bbox, zoom)
-		self.seedTiles(laykey, rq.tiles, toDstGrid=toDstGrid, nbThread=10, buffSize=5000)
+		self.seedTiles(laykey, rq.tiles, toDstGrid=toDstGrid, nbThread=nbThread, buffSize=buffSize)
 
 
 	def getImage(self, laykey, bbox, zoom, path=None, bigTiff=False, outCRS=None, toDstGrid=True, nbThread=10, cpt=True):

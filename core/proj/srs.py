@@ -60,8 +60,7 @@ class SRS():
 		if crs.isdigit():
 			self.auth = 'EPSG' #assume authority is EPSG
 			self.code = int(crs)
-			self.proj4 = '+init=epsg:'+str(self.code)
-			#note : 'epsg' must be lower case to be compatible with gdal osr
+			self.proj4 = 'EPSG:'+str(self.code)
 
 		#case 2 crs is in the form AUTH:CODE
 		elif ':' in crs:
@@ -71,7 +70,7 @@ class SRS():
 				if self.auth.startswith('+init='):
 					_, self.auth = self.auth.split('=')
 				self.auth = self.auth.upper()
-				self.proj4 = '+init=' + self.auth.lower() + ':' + str(self.code)
+				self.proj4 = self.auth.upper() + ':' + str(self.code)
 			else:
 				raise ValueError('Invalid CRS : '+crs)
 

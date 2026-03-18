@@ -97,6 +97,9 @@ logger.setLevel(logging.DEBUG)
 logger.info('###### Starting new Blender session : {}'.format(datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
 
 def _excepthook(exc_type, exc_value, exc_traceback):
+	if exc_traceback is None:
+		sys.__excepthook__(exc_type, exc_value, exc_traceback)
+		return
 	if 'cartoblend' in exc_traceback.tb_frame.f_code.co_filename or 'CartoBlend' in exc_traceback.tb_frame.f_code.co_filename:
 		logger.error("Uncaught exception", exc_info=(exc_type, exc_value, exc_traceback))
 	sys.__excepthook__(exc_type, exc_value, exc_traceback)
@@ -190,7 +193,6 @@ class BGIS_OT_logs(bpy.types.Operator):
 			logs = bpy.data.texts[logsFileName]
 		else:
 			logs = bpy.data.texts.load(logsFilePath)
-		bpy.ops.screen.area_split(direction='VERTICAL', factor=0.5)
 		area = bpy.context.area
 		area.type = 'TEXT_EDITOR'
 		area.spaces[0].text = logs
@@ -530,20 +532,24 @@ def register():
 	#shortcuts
 	if not bpy.app.background: #no ui when running as background
 		wm = bpy.context.window_manager
-		kc =  wm.keyconfigs.active
-		if '3D View' in kc.keymaps:
-			km = kc.keymaps['3D View']
-			if BASEMAPS:
-				kmi = km.keymap_items.new(idname='view3d.map_start', type='NUMPAD_ASTERIX', value='PRESS')
+		kc = wm.keyconfigs.active
+		if kc is not None:
+			if '3D View' in kc.keymaps:
+				km = kc.keymaps['3D View']
+				if BASEMAPS:
+					kmi = km.keymap_items.new(idname='view3d.map_start', type='NUMPAD_ASTERIX', value='PRESS')
 
 	#Setup prefs
-	preferences = bpy.context.preferences.addons[__package__].preferences
-	logger.setLevel(logging.getLevelName(preferences.logLevel)) #will affect all child logger
+	try:
+		preferences = bpy.context.preferences.addons[__package__].preferences
+		logger.setLevel(logging.getLevelName(preferences.logLevel)) #will affect all child logger
 
-	#update core settings according to addon prefs
-	settings.proj_engine = preferences.projEngine
-	settings.img_engine = preferences.imgEngine
-	settings.maptiler_api_key = preferences.maptiler_api_key
+		#update core settings according to addon prefs
+		settings.proj_engine = preferences.projEngine
+		settings.img_engine = preferences.imgEngine
+		settings.maptiler_api_key = preferences.maptiler_api_key
+	except KeyError:
+		logger.warning('Could not access addon preferences')
 
 def unregister():
 
@@ -552,11 +558,13 @@ def unregister():
 
 	if not bpy.app.background: #no ui when running as background
 		wm = bpy.context.window_manager
-		if '3D View' in  wm.keyconfigs.active.keymaps:
-			km = wm.keyconfigs.active.keymaps['3D View']
-			if BASEMAPS:
-				if 'view3d.map_start' in km.keymap_items:
-					kmi = km.keymap_items.remove(km.keymap_items['view3d.map_start'])
+		kc = wm.keyconfigs.active
+		if kc is not None:
+			if '3D View' in kc.keymaps:
+				km = kc.keymaps['3D View']
+				if BASEMAPS:
+					if 'view3d.map_start' in km.keymap_items:
+						kmi = km.keymap_items.remove(km.keymap_items['view3d.map_start'])
 
 	geoscene.unregister()
 

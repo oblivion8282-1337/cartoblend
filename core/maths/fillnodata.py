@@ -28,6 +28,7 @@
 # https://github.com/gasagna/openpiv-python/blob/master/openpiv/src/lib.pyx
 
 
+import math
 import numpy as np
 
 DTYPEf = np.float32
@@ -187,7 +188,7 @@ def sincinterp(image, x,  y, kernel_size=3 ):
 	r = np.zeros( [x.shape[0], x.shape[1]], dtype=DTYPEf)
 
 	# fast pi
-	pi = 3.1419
+	pi = math.pi
 
 	# for each point of the output array
 	for I in range(x.shape[0]):

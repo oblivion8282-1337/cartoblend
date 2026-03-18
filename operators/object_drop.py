@@ -47,6 +47,9 @@ def get_lowest_world_co(ob, mat_parent=None):
     if mat_parent:
         mat_to_world = mat_parent @ mat_to_world
     lowest = None
+    if not bme.verts:
+        bme.free()
+        return None
     for v in bme.verts:
         if not lowest:
             lowest = v

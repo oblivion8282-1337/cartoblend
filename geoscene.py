@@ -258,7 +258,8 @@ class GeoScene():
 			if crs.isWGS84:
 				#if destination crs is wgs84, just assign lonlat to originprj
 				self.crsx, self.crsy = self.lon, self.lat
-			self.crsx, self.crsy = reprojPt(4326, str(crs), self.lon, self.lat)
+			else:
+				self.crsx, self.crsy = reprojPt(4326, str(crs), self.lon, self.lat)
 		elif self.hasOriginPrj and self.hasCRS:
 			if self.hasValidCRS:
 				# will raise an error is current crs is empty or invalid
@@ -452,7 +453,7 @@ class GEOSCENE_OT_set_crs(Operator):
 			geoscn.crs = prefs.predefCrs
 		except Exception as err:
 			log.error('Cannot update crs', exc_info=True)
-			self.report({'ERROR'}, 'Cannot update crs. Check logs form more info')
+			self.report({'ERROR'}, 'Cannot update crs. Check logs for more info')
 			return {'CANCELLED'}
 		#
 		if context.area:
@@ -506,7 +507,10 @@ class GEOSCENE_OT_edit_org_geo(Operator):
 		if geoscn.isBroken:
 			self.report({'ERROR'}, "Scene georef is broken")
 			return {'CANCELLED'}
-		self.lon, self.lat = geoscn.getOriginGeo()
+		if geoscn.hasOriginGeo:
+			self.lon, self.lat = geoscn.getOriginGeo()
+		else:
+			self.lon, self.lat = 0.0, 0.0
 		return context.window_manager.invoke_props_dialog(self)
 
 	def execute(self, context):
@@ -532,7 +536,10 @@ class GEOSCENE_OT_edit_org_prj(Operator):
 		if geoscn.isBroken:
 			self.report({'ERROR'}, "Scene georef is broken")
 			return {'CANCELLED'}
-		self.x, self.y = geoscn.getOriginPrj()
+		if geoscn.hasOriginPrj:
+			self.x, self.y = geoscn.getOriginPrj()
+		else:
+			self.x, self.y = 0.0, 0.0
 		return context.window_manager.invoke_props_dialog(self)
 
 	def execute(self, context):
@@ -629,7 +636,7 @@ def setLon(self, lon):
 	if geoscn.hasOriginGeo:
 		geoscn.updOriginGeo(lon, geoscn.lat, updObjLoc=prefs.lockObj)
 	else:
-		geoscn.setOriginGeo(lon, geoscn.lat)
+		geoscn.setOriginGeo(lon, geoscn.lat if geoscn.hasOriginGeo else 0.0)
 
 def setLat(self, lat):
 	geoscn = GeoScene()
@@ -637,7 +644,7 @@ def setLat(self, lat):
 	if geoscn.hasOriginGeo:
 		geoscn.updOriginGeo(geoscn.lon, lat, updObjLoc=prefs.lockObj)
 	else:
-		geoscn.setOriginGeo(geoscn.lon, lat)
+		geoscn.setOriginGeo(geoscn.lon if geoscn.hasOriginGeo else 0.0, lat)
 
 def getCrsx(self):
 	geoscn = GeoScene()
@@ -653,7 +660,7 @@ def setCrsx(self, x):
 	if geoscn.hasOriginPrj:
 		geoscn.updOriginPrj(x, geoscn.crsy, updObjLoc=prefs.lockObj)
 	else:
-		geoscn.setOriginPrj(x, geoscn.crsy)
+		geoscn.setOriginPrj(x, geoscn.crsy if geoscn.hasOriginPrj else 0.0)
 
 def setCrsy(self, y):
 	geoscn = GeoScene()
@@ -661,7 +668,7 @@ def setCrsy(self, y):
 	if geoscn.hasOriginPrj:
 		geoscn.updOriginPrj(geoscn.crsx, y, updObjLoc=prefs.lockObj)
 	else:
-		geoscn.setOriginPrj(geoscn.crsx, y)
+		geoscn.setOriginPrj(geoscn.crsx if geoscn.hasOriginPrj else 0.0, y)
 
 ################  PANEL ######################
 
@@ -699,7 +706,7 @@ def georefManagerLayout(self, context):
 	'''Use this method to extend a panel with georef managment tools'''
 	layout = self.layout
 	scn = context.scene
-	wm = bpy.context.window_manager
+	wm = context.window_manager
 	geoscn = GeoScene(scn)
 
 	prefs = context.preferences.addons[PKG].preferences
