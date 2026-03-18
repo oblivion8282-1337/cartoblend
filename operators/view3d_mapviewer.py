@@ -71,6 +71,7 @@ _last_map_grd = None
 
 #Flag: N-Panel "Go" button was clicked while map viewer is running
 _goto_pending = False
+_goto_prev_zoom = None  # zoom level BEFORE map_goto overwrites geoscn.zoom
 
 #Flag: N-Panel "Export" button was clicked while map viewer is running
 _export_pending = False
@@ -91,6 +92,12 @@ _overlay_export_tiles = 0
 
 #Flag: N-Panel detail offset was changed while map viewer is running
 _detail_changed_pending = False
+
+#Flag: N-Panel zoom field was changed by the user
+_zoom_jump_pending = False
+
+#Guard: suppress zoom callback while modal syncs the property
+_zoom_syncing = False
 
 ####################
 
@@ -536,6 +543,23 @@ def _drawOverlayPersistent():
 	gpu.state.blend_set('NONE')
 
 
+def _zoom_from_nominatim(result):
+	"""Derive an appropriate zoom level from a Nominatim result dict."""
+	if 'boundingbox' in result:
+		bbox = result['boundingbox']
+		lat_extent = abs(float(bbox[1]) - float(bbox[0]))
+		lon_extent = abs(float(bbox[3]) - float(bbox[2]))
+		max_extent = max(lat_extent, lon_extent)
+		if max_extent > 0:
+			zoom = int(math.log2(360 / max_extent))
+			return max(2, min(zoom, 16))
+	# No bounding box — point feature, use type-based fallback
+	result_class = result.get('class', '')
+	if result_class in ('highway', 'amenity', 'shop', 'tourism', 'building', 'place'):
+		return 16
+	return 14
+
+
 def _clamp_export_zoom(basemap, detail_offset):
 	"""Compute and clamp export zoom from current zoom + offset."""
 	z = basemap.zoom + detail_offset
@@ -599,6 +623,11 @@ def _on_detail_offset_changed(self, context):
 	if _map_viewer_active:
 		_detail_changed_pending = True
 
+def _on_zoom_input_changed(self, context):
+	global _zoom_jump_pending, _zoom_syncing
+	if _map_viewer_active and not _zoom_syncing:
+		_zoom_jump_pending = True
+
 class GIS_PG_basemap_settings(PropertyGroup):
 	src: EnumProperty(
 		name="Source",
@@ -619,6 +648,14 @@ class GIS_PG_basemap_settings(PropertyGroup):
 		min=-5,
 		max=8,
 		update=_on_detail_offset_changed,
+	)
+	map_zoom: IntProperty(
+		name="Zoom",
+		description="Current map zoom level. Type a value to jump directly to that zoom",
+		default=0,
+		min=0,
+		max=25,
+		update=_on_zoom_input_changed,
 	)
 
 
@@ -991,7 +1028,7 @@ class VIEW3D_OT_map_viewer(Operator):
 		return {'FINISHED'}
 
 	def modal(self, context, event):
-		global _map_viewer_active, _goto_pending, _export_pending, _exit_pending, _source_change_pending, _detail_changed_pending
+		global _map_viewer_active, _goto_pending, _goto_prev_zoom, _export_pending, _exit_pending, _source_change_pending, _detail_changed_pending, _zoom_jump_pending, _zoom_syncing
 
 		if not context.area:
 			return {'CANCELLED'}
@@ -1002,9 +1039,33 @@ class VIEW3D_OT_map_viewer(Operator):
 		if event.type == 'TIMER':
 			#report thread progression
 			self.progress = self.map.srv.report
+			#Check if user typed a zoom value in the N-Panel field (BEFORE sync!)
+			if _zoom_jump_pending:
+				_zoom_jump_pending = False
+				new_zoom = context.scene.gis_basemap.map_zoom
+				new_zoom = max(self.map.layer.zmin, min(new_zoom, self.map.layer.zmax))
+				new_zoom = max(0, min(new_zoom, self.map.tm.nbLevels - 1))
+				if new_zoom != self.map.zoom:
+					resFactor = self.map.tm.getFromToResFac(self.map.zoom, new_zoom)
+					context.region_data.view_distance *= resFactor
+					self.map.zoom = new_zoom
+				self.map.get()
+			#Sync map_zoom property so the N-Panel field shows current zoom (only when value differs)
+			try:
+				if context.scene.gis_basemap.map_zoom != self.map.zoom:
+					_zoom_syncing = True
+					context.scene.gis_basemap.map_zoom = self.map.zoom
+					_zoom_syncing = False
+			except Exception:
+				_zoom_syncing = False
 			#Check if N-Panel "Go" button requested a location change
 			if _goto_pending:
 				_goto_pending = False
+				# self.map.zoom is already the NEW zoom (geoscn.zoom was set by map_goto)
+				# Use _goto_prev_zoom to compute the view_distance ratio
+				if _goto_prev_zoom is not None and _goto_prev_zoom != self.map.zoom:
+					resFactor = self.map.tm.getFromToResFac(_goto_prev_zoom, self.map.zoom)
+					context.region_data.view_distance *= resFactor
 				self.map.get()
 			#Check if N-Panel "Export" button was clicked
 			if _export_pending:
@@ -1370,15 +1431,7 @@ class VIEW3D_OT_map_search(bpy.types.Operator):
 			else:
 				geoscn.setOriginGeo(lon, lat)
 			#Auto-zoom based on Nominatim bounding box
-			if 'boundingbox' in result:
-				bbox = result['boundingbox'] #[south_lat, north_lat, west_lon, east_lon]
-				lat_extent = abs(float(bbox[1]) - float(bbox[0]))
-				lon_extent = abs(float(bbox[3]) - float(bbox[2]))
-				max_extent = max(lat_extent, lon_extent)
-				if max_extent > 0:
-					zoom = int(math.log2(360 / max_extent))
-					zoom = max(2, min(zoom, 16))
-					geoscn.zoom = zoom
+			geoscn.zoom = _zoom_from_nominatim(result)
 		return {'FINISHED'}
 
 
@@ -1446,15 +1499,7 @@ class VIEW3D_OT_map_search_results(bpy.types.Operator):
 			geoscn.setOriginGeo(lon, lat)
 
 		#Auto-zoom based on bounding box
-		if 'boundingbox' in result:
-			bbox = result['boundingbox']
-			lat_extent = abs(float(bbox[1]) - float(bbox[0]))
-			lon_extent = abs(float(bbox[3]) - float(bbox[2]))
-			max_extent = max(lat_extent, lon_extent)
-			if max_extent > 0:
-				zoom = int(math.log2(360 / max_extent))
-				zoom = max(2, min(zoom, 16))
-				geoscn.zoom = zoom
+		geoscn.zoom = _zoom_from_nominatim(result)
 
 		#Start map viewer
 		self._start_viewer(context)
@@ -1515,18 +1560,13 @@ class VIEW3D_OT_map_goto(bpy.types.Operator):
 			geoscn.updOriginGeo(lon, lat, updObjLoc=prefs.lockObj)
 		else:
 			geoscn.setOriginGeo(lon, lat)
-		if 'boundingbox' in result:
-			bbox = result['boundingbox']
-			lat_extent = abs(float(bbox[1]) - float(bbox[0]))
-			lon_extent = abs(float(bbox[3]) - float(bbox[2]))
-			max_extent = max(lat_extent, lon_extent)
-			if max_extent > 0:
-				zoom = int(math.log2(360 / max_extent))
-				zoom = max(2, min(zoom, 16))
-				geoscn.zoom = zoom
+		#If map viewer is running, save the OLD zoom before overwriting
+		global _goto_pending, _goto_prev_zoom
+		if _map_viewer_active:
+			_goto_prev_zoom = geoscn.zoom  # Save current zoom before map_goto overwrites it
+		geoscn.zoom = _zoom_from_nominatim(result)
 
 		#If map viewer is running, signal it to refresh at new location
-		global _goto_pending
 		if _map_viewer_active:
 			_goto_pending = True
 			name = result.get('display_name', query)

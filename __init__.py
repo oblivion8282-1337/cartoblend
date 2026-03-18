@@ -220,8 +220,6 @@ class VIEW3D_PT_gis_map(bpy.types.Panel):
 	def draw(self, context):
 		layout = self.layout
 		if BASEMAPS:
-			layout.prop(context.scene.gis_basemap, 'src', text='Source')
-			layout.prop(context.scene.gis_basemap, 'lay', text='Layer')
 			# Search
 			row = layout.row(align=True)
 			row.prop(context.scene, 'gis_goto_query', text='')
@@ -245,29 +243,27 @@ class VIEW3D_PT_gis_map(bpy.types.Panel):
 					for i, q in enumerate(_hist[:5]):
 						op = col.operator("view3d.map_goto_history", text=q, icon='DOT')
 						op.index = i
+			# Source / Layer
+			layout.prop(context.scene.gis_basemap, 'src', text='Source')
+			layout.prop(context.scene.gis_basemap, 'lay', text='Layer')
 			# Start / Resume / Export — context-dependent
-			import sys
 			_mv2 = sys.modules.get(__package__ + '.operators.view3d_mapviewer')
 			viewer_active = _mv2 and getattr(_mv2, '_map_viewer_active', False)
 			if viewer_active:
-				# Zoom info display
-				_zoom = getattr(_mv2, '_overlay_zoom', 0)
+				# Zoom input field
+				layout.prop(context.scene.gis_basemap, 'map_zoom', text='Zoom')
+				# Detail offset slider (with export zoom hint if non-zero)
 				_offset = context.scene.gis_basemap.detail_offset
-				if _offset != 0:
-					_export_z = _zoom + _offset
-					# Clamp display (approximate — real clamping in operator)
-					_export_z = max(0, _export_z)
-					row = layout.row()
-					row.label(text="Zoom: {} → Export: {} ({:+d})".format(_zoom, _export_z, _offset), icon='INFO')
-					_tiles = getattr(_mv2, '_overlay_export_tiles', 0)
-					if _tiles > 0:
-						row = layout.row()
-						row.label(text="~{:,} tiles".format(_tiles), icon='MESH_GRID')
-				else:
-					row = layout.row()
-					row.label(text="Zoom: {}".format(_zoom), icon='INFO')
-				# Detail offset slider
 				layout.prop(context.scene.gis_basemap, 'detail_offset', text='Detail Offset')
+				if _offset != 0:
+					_zoom = getattr(_mv2, '_overlay_zoom', 0)
+					_export_z = max(0, _zoom + _offset)
+					_tiles = getattr(_mv2, '_overlay_export_tiles', 0)
+					row = layout.row()
+					lbl = "Export: z{} ({:+d})".format(_export_z, _offset)
+					if _tiles > 0:
+						lbl += "  ~{:,} tiles".format(_tiles)
+					row.label(text=lbl, icon='INFO')
 				# Export and Exit buttons
 				layout.operator("view3d.map_export", icon='CHECKMARK', text="Export as Mesh")
 				row = layout.row(align=True)
