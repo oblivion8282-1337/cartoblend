@@ -54,7 +54,7 @@ from .utils import placeObj, adjust3Dview, showTextures, rasterExtentToMesh, geo
 #https://github.com/damianbraun/nominatim
 from .lib.osm.nominatim import nominatimQuery
 
-PKG, SUBPKG = __package__.split('.', maxsplit=1) #blendergis.basemaps
+PKG = __package__.rsplit('.', maxsplit=1)[0]  # bl_ext.user_default.cartoblend
 
 #Nominatim search results cache
 _nominatim_results = []

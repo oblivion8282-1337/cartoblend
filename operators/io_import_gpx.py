@@ -17,7 +17,7 @@ import gpu
 from gpu_extras.batch import batch_for_shader
 from bpy_extras.view3d_utils import location_3d_to_region_2d
 
-PKG, SUBPKG = __package__.split('.', maxsplit=1)
+PKG = __package__.rsplit('.', maxsplit=1)[0]  # bl_ext.user_default.cartoblend
 
 # GPX XML namespace
 GPX_NS_10 = '{http://www.topografix.com/GPX/1/0}'

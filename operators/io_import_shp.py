@@ -20,7 +20,7 @@ from ..core.utils import perf_clock
 
 from .utils import adjust3Dview, getBBOX, DropToGround
 
-PKG, SUBPKG = __package__.split('.', maxsplit=1)
+PKG = __package__.rsplit('.', maxsplit=1)[0]  # bl_ext.user_default.cartoblend
 
 featureType={
 0:'Null',

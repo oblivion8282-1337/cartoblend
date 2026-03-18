@@ -14,7 +14,7 @@ from .utils import adjust3Dview, getBBOX
 
 from .io_import_osm import _apply_building_geonodes
 
-PKG, SUBPKG = __package__.split('.', maxsplit=1)
+PKG = __package__.rsplit('.', maxsplit=1)[0]  # bl_ext.user_default.cartoblend
 
 # Default building height when no property is available
 DEFAULT_BUILDING_HEIGHT = 15.0
