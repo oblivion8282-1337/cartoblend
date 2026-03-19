@@ -268,6 +268,8 @@ class BaseMap(GeoScene):
 
 	def place(self):
 		'''Set map as background image'''
+		if self.mosaic is None:
+			return
 
 		img_w, img_h = self.mosaic.size
 
@@ -296,7 +298,7 @@ class BaseMap(GeoScene):
 
 		#Get or reuse background image empty
 		empties = [obj for obj in self.scn.objects if obj.type == 'EMPTY']
-		bkgs = [obj for obj in empties if obj.empty_display_type == 'IMAGE']
+		bkgs = [obj for obj in empties if obj.empty_display_type == 'IMAGE' and obj.get("_cartoblend_basemap")]
 		if bkgs:
 			self.bkg = bkgs[0]
 			self.bkg.name = self.name
@@ -309,6 +311,7 @@ class BaseMap(GeoScene):
 		else:
 			self.bkg = bpy.data.objects.new(self.name, None)
 			self.bkg.empty_display_type = 'IMAGE'
+			self.bkg["_cartoblend_basemap"] = True
 			self.bkg.empty_image_depth = 'BACK'
 			self.bkg.data = self.img
 			self.scn.collection.objects.link(self.bkg)
@@ -1012,6 +1015,8 @@ class VIEW3D_OT_map_viewer(Operator):
 		self.zoomBoxDrag = False
 		self.zb_xmin, self.zb_xmax = 0, 0
 		self.zb_ymin, self.zb_ymax = 0, 0
+		self._viewDstZ = None
+		self._viewLoc = None
 
 		#Get map
 		self.map = BaseMap(context, self.srckey, self.laykey, self.grdkey)
@@ -1042,8 +1047,14 @@ class VIEW3D_OT_map_viewer(Operator):
 		global _map_viewer_active
 		_map_viewer_active = False
 		self.map.stop()
-		bpy.types.SpaceView3D.draw_handler_remove(self._drawTextHandler, 'WINDOW')
-		bpy.types.SpaceView3D.draw_handler_remove(self._drawZoomBoxHandler, 'WINDOW')
+		try:
+			bpy.types.SpaceView3D.draw_handler_remove(self._drawTextHandler, 'WINDOW')
+		except Exception:
+			pass
+		try:
+			bpy.types.SpaceView3D.draw_handler_remove(self._drawZoomBoxHandler, 'WINDOW')
+		except Exception:
+			pass
 		if context.area:
 			context.area.header_text_set(None)
 		context.window_manager.event_timer_remove(self.timer)
@@ -1238,6 +1249,8 @@ class VIEW3D_OT_map_viewer(Operator):
 						else:
 							#Progressibly zoom to cursor
 							dst = context.region_data.view_distance
+							if dst == 0:
+								return {'PASS_THROUGH'}
 							dst2 = dst * resFactor
 							context.region_data.view_distance = dst2
 							mouseLoc = mouseTo3d(context, event.mouse_region_x, event.mouse_region_y)
@@ -1289,6 +1302,8 @@ class VIEW3D_OT_map_viewer(Operator):
 						else:
 							#Progressibly zoom to cursor
 							dst = context.region_data.view_distance
+							if dst == 0:
+								return {'PASS_THROUGH'}
 							dst2 = dst * resFactor
 							context.region_data.view_distance = dst2
 							mouseLoc = mouseTo3d(context, event.mouse_region_x, event.mouse_region_y)
@@ -1321,8 +1336,9 @@ class VIEW3D_OT_map_viewer(Operator):
 			if self.inMove:
 				needs_redraw = True  # map is being dragged
 				loc1 = mouseTo3d(context, self.x1, self.y1)
-				# Reuse mouseLoc from above instead of calling mouseTo3d again
-				dlt = loc1 - mouseLoc if mouseLoc is not None else loc1 - mouseTo3d(context, event.mouse_region_x, event.mouse_region_y)
+				if mouseLoc is None or loc1 is None:
+					return {'PASS_THROUGH'}
+				dlt = loc1 - mouseLoc
 				if event.ctrl or self.prefs.lockOrigin:
 					context.region_data.view_location = self.viewLoc1 + dlt
 				else:
@@ -1366,6 +1382,9 @@ class VIEW3D_OT_map_viewer(Operator):
 						#Compute final shift
 						loc1 = mouseTo3d(context, self.x1, self.y1)
 						loc2 = mouseTo3d(context, event.mouse_region_x, event.mouse_region_y)
+						if loc1 is None or loc2 is None:
+							self.map.get()
+							return {'RUNNING_MODAL'}
 						dlt = loc1 - loc2
 						#Update map (do not update objects location because it was updated while mouse move)
 						self.map.moveOrigin(dlt.x, dlt.y, updObjLoc=False)
@@ -1419,6 +1438,8 @@ class VIEW3D_OT_map_viewer(Operator):
 				self._viewLoc = context.region_data.view_location.copy()
 
 			if event.value == 'RELEASE':
+				if self._viewDstZ is None:
+					return {'PASS_THROUGH'}
 				#restore view 3d distance and location
 				context.region_data.view_distance = self._viewDstZ
 				context.region_data.view_location = self._viewLoc

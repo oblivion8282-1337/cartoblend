@@ -810,201 +810,203 @@ class OSM_IMPORT():
 			#Create a new bmesh
 			#>using an intermediate bmesh object allows some extra operation like extrusion
 			bm = bmesh.new()
+			try:
 
-			#Pre-create attribute layers before adding geometry (adding layers invalidates element refs)
-			is_building = closed and self.buildingsExtrusion and any(tag in closedWaysAreExtruded for tag in tags)
-			is_street = not closed and 'highway' in tags
-			if is_building:
-				height_layer = bm.faces.layers.float.new('height')
-				roof_shape_layer = bm.faces.layers.int.new('roof_shape')
-				roof_height_layer = bm.faces.layers.float.new('roof_height')
-			if is_street:
-				width_layer = bm.verts.layers.float.new('width')
-
-			if len(pts) == 1:
-				verts = [bm.verts.new(pt) for pt in pts]
-
-			elif closed: #faces
-				verts = [bm.verts.new(pt) for pt in pts]
-				face = bm.faces.new(verts)
-				#ensure face is up (anticlockwise order)
-				#because in OSM there is no particular order for closed ways
-				face.normal_update()
-				if face.normal.z < 0:
-					face.normal_flip()
-
-				#Store height as face attribute for Geometry Nodes extrusion
+				#Pre-create attribute layers before adding geometry (adding layers invalidates element refs)
+				is_building = closed and self.buildingsExtrusion and any(tag in closedWaysAreExtruded for tag in tags)
+				is_street = not closed and 'highway' in tags
 				if is_building:
-					offset = None
-					if "height" in tags:
-							htag = tags["height"]
-							htag = htag.replace(',', '.')
-							try:
-								offset = int(htag)
-							except ValueError:
-								try:
-									offset = float(htag)
-								except ValueError:
-									for i, c in enumerate(htag):
-										if not c.isdigit():
-											try:
-												offset, unit = float(htag[:i]), htag[i:].strip()
-											except ValueError:
-												offset = None
-					elif "building:levels" in tags:
-						try:
-							offset = int(tags["building:levels"]) * self.levelHeight
-						except ValueError as e:
-							offset = None
-
-					if offset is None:
-						minH = self.defaultHeight - self.randomHeightThreshold
-						if minH < 0 :
-							minH = 0
-						maxH = self.defaultHeight + self.randomHeightThreshold
-						offset = random.randint(int(minH), int(maxH))
-
-					face[height_layer] = float(offset)
-
-					# --- Roof shape ---
-					_roof_shape_map = {
-						'flat': 0,
-						'gabled': 1,
-						'hipped': 2,
-						'pyramidal': 3,
-						'skillion': 4,
-					}
-					_rs_tag = tags.get('roof:shape', 'flat')
-					_rs_int = _roof_shape_map.get(_rs_tag, 0)
-					face[roof_shape_layer] = _rs_int
-
-					# --- Roof height ---
-					_rh = None
-					if 'roof:height' in tags:
-						try:
-							_rh = float(tags['roof:height'].replace(',', '.').replace('m', '').strip())
-						except ValueError:
-							_rh = None
-					if _rh is None:
-						# Default: 30% of building height for non-flat roofs, 0 for flat
-						_rh = float(offset) * 0.3 if _rs_int > 0 else 0.0
-					face[roof_height_layer] = _rh
-
-
-			elif len(pts) > 1: #edge
-				verts = [bm.verts.new(pt) for pt in pts]
-				for i in range(len(pts)-1):
-					edge = bm.edges.new( [verts[i], verts[i+1] ])
-				#Store street width as vertex attribute for Geometry Nodes
+					height_layer = bm.faces.layers.float.new('height')
+					roof_shape_layer = bm.faces.layers.int.new('roof_shape')
+					roof_height_layer = bm.faces.layers.float.new('roof_height')
 				if is_street:
-					hw_type = tags.get('highway', '')
-					street_w = HIGHWAY_WIDTHS.get(hw_type, DEFAULT_STREET_WIDTH)
-					#OSM width tag overrides default
-					if 'width' in tags:
-						try:
-							street_w = float(tags['width'].replace('m','').replace(',','.').strip())
-						except ValueError:
-							pass
-					for v in verts:
-						v[width_layer] = street_w
+					width_layer = bm.verts.layers.float.new('width')
 
+				if len(pts) == 1:
+					verts = [bm.verts.new(pt) for pt in pts]
 
-			if self.separate:
+				elif closed: #faces
+					verts = [bm.verts.new(pt) for pt in pts]
+					face = bm.faces.new(verts)
+					#ensure face is up (anticlockwise order)
+					#because in OSM there is no particular order for closed ways
+					face.normal_update()
+					if face.normal.z < 0:
+						face.normal_flip()
 
-				name = tags.get('name', str(id))
-
-				mesh = bpy.data.meshes.new(name)
-				bm.to_mesh(mesh)
-				mesh.update()
-
-				obj = bpy.data.objects.new(name, mesh)
-
-				#Add Geometry Nodes modifiers
-				if self.buildingsExtrusion and any(tag in closedWaysAreExtruded for tag in tags):
-					_apply_building_geonodes(obj)
-				if 'highway' in tags:
-					_apply_street_geonodes(obj)
-
-				#Assign tags to custom props
-				obj['id'] = str(id) #cast to str to avoid overflow error "Python int too large to convert to C int"
-				for key in tags.keys():
-					obj[key] = tags[key]
-
-				#Put object in right collection
-				if self.filterTags:
-					tagsList = self.filterTags
-				else:
-					tagsList = OSMTAGS
-				if any(tag in tagsList for tag in tags):
-					for k in tagsList:
-						if k in tags:
+					#Store height as face attribute for Geometry Nodes extrusion
+					if is_building:
+						offset = None
+						if "height" in tags:
+								htag = tags["height"]
+								htag = htag.replace(',', '.')
+								try:
+									offset = int(htag)
+								except ValueError:
+									try:
+										offset = float(htag)
+									except ValueError:
+										for i, c in enumerate(htag):
+											if not c.isdigit():
+												try:
+													offset, unit = float(htag[:i]), htag[i:].strip()
+												except ValueError:
+													offset = None
+						elif "building:levels" in tags:
 							try:
-								tagCollec = layer.children[k]
-							except KeyError:
-								tagCollec = bpy.data.collections.new(k)
-								layer.children.link(tagCollec)
-							tagCollec.objects.link(obj)
-							break
+								offset = int(tags["building:levels"]) * self.levelHeight
+							except ValueError as e:
+								offset = None
+
+						if offset is None:
+							minH = self.defaultHeight - self.randomHeightThreshold
+							if minH < 0 :
+								minH = 0
+							maxH = self.defaultHeight + self.randomHeightThreshold
+							offset = random.randint(int(minH), int(maxH))
+
+						face[height_layer] = float(offset)
+
+						# --- Roof shape ---
+						_roof_shape_map = {
+							'flat': 0,
+							'gabled': 1,
+							'hipped': 2,
+							'pyramidal': 3,
+							'skillion': 4,
+						}
+						_rs_tag = tags.get('roof:shape', 'flat')
+						_rs_int = _roof_shape_map.get(_rs_tag, 0)
+						face[roof_shape_layer] = _rs_int
+
+						# --- Roof height ---
+						_rh = None
+						if 'roof:height' in tags:
+							try:
+								_rh = float(tags['roof:height'].replace(',', '.').replace('m', '').strip())
+							except ValueError:
+								_rh = None
+						if _rh is None:
+							# Default: 30% of building height for non-flat roofs, 0 for flat
+							_rh = float(offset) * 0.3 if _rs_int > 0 else 0.0
+						face[roof_height_layer] = _rh
+
+
+				elif len(pts) > 1: #edge
+					verts = [bm.verts.new(pt) for pt in pts]
+					for i in range(len(pts)-1):
+						edge = bm.edges.new( [verts[i], verts[i+1] ])
+					#Store street width as vertex attribute for Geometry Nodes
+					if is_street:
+						hw_type = tags.get('highway', '')
+						street_w = HIGHWAY_WIDTHS.get(hw_type, DEFAULT_STREET_WIDTH)
+						#OSM width tag overrides default
+						if 'width' in tags:
+							try:
+								street_w = float(tags['width'].replace('m','').replace(',','.').strip())
+							except ValueError:
+								pass
+						for v in verts:
+							v[width_layer] = street_w
+
+
+				if self.separate:
+
+					name = tags.get('name', str(id))
+
+					mesh = bpy.data.meshes.new(name)
+					bm.to_mesh(mesh)
+					mesh.update()
+
+					obj = bpy.data.objects.new(name, mesh)
+
+					#Add Geometry Nodes modifiers
+					if self.buildingsExtrusion and any(tag in closedWaysAreExtruded for tag in tags):
+						_apply_building_geonodes(obj)
+					if 'highway' in tags:
+						_apply_street_geonodes(obj)
+
+					#Assign tags to custom props
+					obj['id'] = str(id) #cast to str to avoid overflow error "Python int too large to convert to C int"
+					for key in tags.keys():
+						obj[key] = tags[key]
+
+					#Put object in right collection
+					if self.filterTags:
+						tagsList = self.filterTags
+					else:
+						tagsList = OSMTAGS
+					if any(tag in tagsList for tag in tags):
+						for k in tagsList:
+							if k in tags:
+								try:
+									tagCollec = layer.children[k]
+								except KeyError:
+									tagCollec = bpy.data.collections.new(k)
+									layer.children.link(tagCollec)
+								tagCollec.objects.link(obj)
+								break
+					else:
+						layer.objects.link(obj)
+
+					obj.select_set(True)
+
+
 				else:
-					layer.objects.link(obj)
+					#Grouping
 
-				obj.select_set(True)
+					bm.verts.index_update()
+					#bm.edges.index_update()
+					#bm.faces.index_update()
 
+					if self.filterTags:
 
-			else:
-				#Grouping
+						#group by tags (there could be some duplicates)
+						for k in self.filterTags:
 
-				bm.verts.index_update()
-				#bm.edges.index_update()
-				#bm.faces.index_update()
+							if k in extags: #
+								objName = type + ':' + k
+								kbm = bmeshes.setdefault(objName, bmesh.new())
+								offset = len(kbm.verts)
+								joinBmesh(bm, kbm)
 
-				if self.filterTags:
-
-					#group by tags (there could be some duplicates)
-					for k in self.filterTags:
-
-						if k in extags: #
-							objName = type + ':' + k
-							kbm = bmeshes.setdefault(objName, bmesh.new())
-							offset = len(kbm.verts)
-							joinBmesh(bm, kbm)
-
-				else:
-					#group all into one unique mesh
-					objName = type
-					_bm = bmeshes.setdefault(objName, bmesh.new())
-					offset = len(_bm.verts)
-					joinBmesh(bm, _bm)
+					else:
+						#group all into one unique mesh
+						objName = type
+						_bm = bmeshes.setdefault(objName, bmesh.new())
+						offset = len(_bm.verts)
+						joinBmesh(bm, _bm)
 
 
-				#vertex group
-				name = tags.get('name', None)
-				vidx = [v.index + offset for v in bm.verts]
-				vgroups = vgroupsObj.setdefault(objName, {})
+					#vertex group
+					name = tags.get('name', None)
+					vidx = [v.index + offset for v in bm.verts]
+					vgroups = vgroupsObj.setdefault(objName, {})
 
-				for tag in extags:
-					#if tag in osmTags:#filter
-					if not tag.startswith('name'):
-						vgroup = vgroups.setdefault('Tag:'+tag, [])
+					for tag in extags:
+						#if tag in osmTags:#filter
+						if not tag.startswith('name'):
+							vgroup = vgroups.setdefault('Tag:'+tag, [])
+							vgroup.extend(vidx)
+
+					if name is not None:
+						#vgroup['Name:'+name] = [vidx]
+						vgroup = vgroups.setdefault('Name:'+name, [])
 						vgroup.extend(vidx)
 
-				if name is not None:
-					#vgroup['Name:'+name] = [vidx]
-					vgroup = vgroups.setdefault('Name:'+name, [])
-					vgroup.extend(vidx)
-
-				if 'relation' in self.featureType:
-					for rel in result.relations:
-						name = rel.tags.get('name', str(rel.id))
-						for member in rel.members:
-							#todo: remove duplicate members
-							if id == member.ref:
-								vgroup = vgroups.setdefault('Relation:'+name, [])
-								vgroup.extend(vidx)
+					if 'relation' in self.featureType:
+						for rel in result.relations:
+							name = rel.tags.get('name', str(rel.id))
+							for member in rel.members:
+								#todo: remove duplicate members
+								if id == member.ref:
+									vgroup = vgroups.setdefault('Relation:'+name, [])
+									vgroup.extend(vidx)
 
 
 
-			bm.free()
+			finally:
+				bm.free()
 
 
 		######
@@ -1182,6 +1184,9 @@ class IMPORTGIS_OT_osm_file(Operator, OSM_IMPORT):
 
 		#Get bbox
 		bounds = result.bounds
+		if not bounds or 'minlon' not in bounds:
+			self.report({'WARNING'}, "OSM result has no bounds, cannot set scene georef")
+			return {'CANCELLED'}
 		lon = (bounds["minlon"] + bounds["maxlon"])/2
 		lat = (bounds["minlat"] + bounds["maxlat"])/2
 		#Set CRS

@@ -575,8 +575,9 @@ def unregister():
 			if '3D View' in kc.keymaps:
 				km = kc.keymaps['3D View']
 				if BASEMAPS:
-					if 'view3d.map_start' in km.keymap_items:
-						kmi = km.keymap_items.remove(km.keymap_items['view3d.map_start'])
+					items_to_remove = [kmi for kmi in km.keymap_items if kmi.idname == 'view3d.map_start']
+					for kmi in items_to_remove:
+						km.keymap_items.remove(kmi)
 
 	geoscene.unregister()
 

@@ -158,6 +158,7 @@ class IMPORTGIS_OT_ascii_grid(Operator, ImportHelper):
         if geoscn.isBroken:
             self.report({'ERROR'}, "Scene georef is broken, please fix it beforehand")
             return {'CANCELLED'}
+        dx, dy = 0, 0
         if geoscn.isGeoref:
             dx, dy = geoscn.getOriginPrj()
         scale = geoscn.scale #TODO
@@ -196,10 +197,15 @@ class IMPORTGIS_OT_ascii_grid(Operator, ImportHelper):
 
             # step allows reduction during import, only taking every Nth point
             step = self.step
-            nrows = int(meta['nrows'])
-            ncols = int(meta['ncols'])
-            cellsize = float(meta['cellsize'])
-            nodata = float(meta['nodata_value'])
+            try:
+                nrows = int(meta['nrows'])
+                ncols = int(meta['ncols'])
+                cellsize = float(meta['cellsize'])
+                nodata = float(meta['nodata_value'])
+            except KeyError as e:
+                log.error("Missing required header key: %s", e)
+                self.report({'ERROR'}, "Missing required ASC header key: {}".format(e))
+                return {'CANCELLED'}
 
             # options are lower left cell corner, or lower left cell centre
             reprojection = {}
@@ -211,6 +217,10 @@ class IMPORTGIS_OT_ascii_grid(Operator, ImportHelper):
                 centre = XY(float(meta['xllcenter']), float(meta['yllcenter']))
                 offset = XY(-cellsize / 2, -cellsize / 2)
                 reprojection['from'] = centre
+            else:
+                log.error("ASC file missing xllcorner/xllcenter header")
+                self.report({'ERROR'}, "ASC file is missing xllcorner or xllcenter header")
+                return {'CANCELLED'}
 
             # now set the correct offset for the mesh
             if rprj:

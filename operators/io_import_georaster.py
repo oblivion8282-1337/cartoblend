@@ -220,6 +220,7 @@ class IMPORTGIS_OT_georaster(Operator, ImportHelper):
 
 		scale = geoscn.scale #TODO
 
+		dx, dy = 0, 0
 		if geoscn.isGeoref:
 			dx, dy = geoscn.getOriginPrj()
 			if self.reprojection:

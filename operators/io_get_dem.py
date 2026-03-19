@@ -145,6 +145,12 @@ class IMPORTGIS_OT_dem_query(Operator):
 			subdivision = 'subsurf',
 			demInterpolation = True)
 		else:
+			objectsLst = next(
+				(str(i) for i, obj in enumerate(scn.collection.all_objects) if obj.name == context.active_object.name),
+				None)
+			if objectsLst is None:
+				self.report({'ERROR'}, "Active object not found in scene collection")
+				return {'CANCELLED'}
 			bpy.ops.importgis.georaster(
 			'EXEC_DEFAULT',
 			filepath = filePath,
@@ -154,7 +160,7 @@ class IMPORTGIS_OT_dem_query(Operator):
 			subdivision = 'subsurf',
 			demInterpolation = True,
 			demOnMesh = True,
-			objectsLst = [str(i) for i, obj in enumerate(scn.collection.all_objects) if obj.name == bpy.context.active_object.name][0],
+			objectsLst = objectsLst,
 			clip = False,
 			fillNodata = False)
 

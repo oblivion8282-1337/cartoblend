@@ -295,6 +295,7 @@ class NpImage():
 			self.georef = GeoRef.fromGDAL(ds)
 			#adjust georef against subbox
 			if self.subBoxPx is not None and self.georef is not None:
+				self.georef.setSubBoxPx(self.subBoxPx)
 				self.georef.applySubBox()
 
 		return data
@@ -424,8 +425,7 @@ class NpImage():
 			self.data[y:y+h, x:x+w] = data
 		elif (not img.isOneBand and self.isOneBand) or (img.isOneBand and not self.isOneBand):
 			raise ValueError('Paste error, cannot mix one band with multiband')
-
-		if self.hasAlpha:
+		elif self.hasAlpha:
 			n = img.nbBands
 			self.data[y:y+h, x:x+w, 0:n] = data
 		else:

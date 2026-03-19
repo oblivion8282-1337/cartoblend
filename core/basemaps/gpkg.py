@@ -45,6 +45,8 @@ class GeoPackage():
 
 		# Thread-local storage for per-thread SQLite connections
 		self._local = threading.local()
+		self._all_connections = []
+		self._conn_lock = threading.Lock()
 
 		#Get props from TileMatrix object
 		self.auth, self.code = tm.CRS.split(':')
@@ -71,6 +73,8 @@ class GeoPackage():
 		if conn is None:
 			conn = sqlite3.connect(self.dbPath, detect_types=detect_types)
 			setattr(self._local, attr, conn)
+			with self._conn_lock:
+				self._all_connections.append(conn)
 		return conn
 
 	def close(self):
@@ -83,6 +87,16 @@ class GeoPackage():
 				except Exception:
 					pass
 				setattr(self._local, attr, None)
+
+	def close_all(self):
+		"""Close all tracked connections across all threads."""
+		with self._conn_lock:
+			for conn in self._all_connections:
+				try:
+					conn.close()
+				except Exception:
+					pass
+			self._all_connections.clear()
 
 
 	def isGPKG(self):
@@ -258,9 +272,12 @@ class GeoPackage():
 		result = db.execute(query, (z, x, y)).fetchone()
 		if result is None:
 			return None
-		timeDelta = datetime.datetime.now() - result[1]
-		if timeDelta.days > self.MAX_DAYS:
-			return None
+		try:
+			timeDelta = datetime.datetime.now() - result[1]
+			if timeDelta.days > self.MAX_DAYS:
+				return None
+		except (TypeError, AttributeError):
+			pass
 		return result[0]
 
 	def putTile(self, x, y, z, data):
@@ -275,6 +292,8 @@ class GeoPackage():
 		"""
 		input : tiles list [(x,y,z)]
 		output : tiles list set [(x,y,z)] of existing records in cache db"""
+		if not tiles:
+			return set()
 
 		db = self._get_connection(detect_types=sqlite3.PARSE_DECLTYPES)
 
@@ -305,6 +324,8 @@ class GeoPackage():
 	def getTiles(self, tiles):
 		"""tiles = list of (x,y,z) tuple
 		return list of (x,y,z,data) tuple"""
+		if not tiles:
+			return []
 
 		db = self._get_connection(detect_types=sqlite3.PARSE_DECLTYPES)
 

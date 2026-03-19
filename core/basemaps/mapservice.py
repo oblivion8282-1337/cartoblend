@@ -304,6 +304,8 @@ class TileMatrix():
 					else:
 						return z2
 
+		return len(resLst) - 1
+
 	def getPrevResFac(self, z):
 		"""return res factor to previous zoom level"""
 		return self.getFromToResFac(z, z-1)
@@ -697,13 +699,14 @@ class MapService():
 			tm = self.srcTms
 
 		mapKey = self.srckey + '_' + laykey + '_' + grdkey
-		cache = self.caches.get(mapKey)
-		if cache is None:
-			dbPath = os.path.join(self.cacheFolder, mapKey + ".gpkg")
-			self.caches[mapKey] = GeoPackage(dbPath, tm)
-			return self.caches[mapKey]
-		else:
-			return cache
+		with self.lock:
+			cache = self.caches.get(mapKey)
+			if cache is None:
+				dbPath = os.path.join(self.cacheFolder, mapKey + ".gpkg")
+				self.caches[mapKey] = GeoPackage(dbPath, tm)
+				return self.caches[mapKey]
+			else:
+				return cache
 
 	def getTM(self, dstGrid=False):
 		if dstGrid:
@@ -855,7 +858,12 @@ class MapService():
 		lay = self.layers[laykey]
 		data_type = lay.urlKey  # e.g. 'sentinel-2-l2a' or 'byoc-...'
 		time_range = getattr(lay, 'timeRange', {"from": "2024-01-01T00:00:00Z", "to": "2099-12-31T00:00:00Z"})
-		evalscript = getattr(lay, 'evalscript', CDSE_EVALSCRIPT)
+		if hasattr(lay, 'evalscript'):
+			evalscript = lay.evalscript
+		elif lay.urlKey.startswith('byoc-'):
+			evalscript = CDSE_MOSAIC_EVALSCRIPT
+		else:
+			evalscript = CDSE_EVALSCRIPT
 
 		body = {
 			"input": {
@@ -998,7 +1006,7 @@ class MapService():
 					tilesData.put( (col, row, zoom, data) ) #will block if the queue is full
 					del data
 				if cpt:
-					self.cptTiles += 1
+					self.cptTiles += 1  # race on cptTiles is accepted (progress display only)
 				#self.nTaskDone += 1
 				#flag it's done
 				tilesQueue.task_done() #it's just a count of finished tasks used by join() to know if the work is finished
@@ -1023,8 +1031,11 @@ class MapService():
 						except queue.Empty:
 							break
 					if batch:
-						with self.lock:
-							cache.putTiles(batch)
+						try:
+							with self.lock:
+								cache.putTiles(batch)
+						except Exception as e:
+							log.warning("Failed to write tile batch to cache: %s", e)
 						del batch
 				elif is_done and tilesData.empty():
 					break
@@ -1081,6 +1092,8 @@ class MapService():
 				t.join()
 			#Then wait for seeder (it exits when the data queue is drained)
 			seeder.join()
+
+			cache.close_all()
 
 		#Reinit status and cpt progress
 		if cpt:

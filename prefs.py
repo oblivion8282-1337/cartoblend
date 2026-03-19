@@ -510,7 +510,7 @@ class BGIS_OT_add_predef_crs(Operator):
 	def check(self, context):
 		return True
 
-	def search(self, context):
+	def _do_search(self, context):
 
 		apiKey = settings.maptiler_api_key
 
@@ -540,7 +540,7 @@ class BGIS_OT_add_predef_crs(Operator):
 			self.crs = 'EPSG:' + str(crs['id']['code'])
 			self.desc = crs['name']
 
-	query: StringProperty(name='Query', description='Hit enter to process the search', update=search)
+	query: StringProperty(name='Query', description='Hit enter to process the search', update=_do_search)
 
 	results: StringProperty()
 

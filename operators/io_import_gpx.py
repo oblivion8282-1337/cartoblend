@@ -54,8 +54,11 @@ def _parse_gpx(filepath):
 
 	# --- Waypoints ---
 	for wpt in root.findall(ns + 'wpt'):
-		lat = float(wpt.get('lat'))
-		lon = float(wpt.get('lon'))
+		try:
+			lat = float(wpt.get('lat'))
+			lon = float(wpt.get('lon'))
+		except (TypeError, ValueError):
+			continue
 		ele_el = wpt.find(ns + 'ele')
 		ele = float(ele_el.text) if ele_el is not None and ele_el.text else 0.0
 		name_el = wpt.find(ns + 'name')
@@ -68,8 +71,11 @@ def _parse_gpx(filepath):
 		rte_name = name_el.text if name_el is not None and name_el.text else ''
 		points = []
 		for rtept in rte.findall(ns + 'rtept'):
-			lat = float(rtept.get('lat'))
-			lon = float(rtept.get('lon'))
+			try:
+				lat = float(rtept.get('lat'))
+				lon = float(rtept.get('lon'))
+			except (TypeError, ValueError):
+				continue
 			ele_el = rtept.find(ns + 'ele')
 			ele = float(ele_el.text) if ele_el is not None and ele_el.text else 0.0
 			points.append((lon, lat, ele))
@@ -84,8 +90,11 @@ def _parse_gpx(filepath):
 		for trkseg in trk.findall(ns + 'trkseg'):
 			seg_points = []
 			for trkpt in trkseg.findall(ns + 'trkpt'):
-				lat = float(trkpt.get('lat'))
-				lon = float(trkpt.get('lon'))
+				try:
+					lat = float(trkpt.get('lat'))
+					lon = float(trkpt.get('lon'))
+				except (TypeError, ValueError):
+					continue
 				ele_el = trkpt.find(ns + 'ele')
 				ele = float(ele_el.text) if ele_el is not None and ele_el.text else 0.0
 				seg_points.append((lon, lat, ele))
@@ -752,6 +761,8 @@ class IMPORTGIS_OT_gpx_file(Operator):
 
 		# Helper: build a curve object from 3D points
 		def make_curve_object(name, pts_3d, parent_collection):
+			if len(pts_3d) < 1:
+				return None
 			curve = bpy.data.curves.new(name, type='CURVE')
 			curve.dimensions = '3D'
 			spline = curve.splines.new('POLY')
@@ -802,6 +813,8 @@ class IMPORTGIS_OT_gpx_file(Operator):
 					if self.separate:
 						seg_name = trk_name if len(trk['segments']) == 1 else f"{trk_name} seg{seg_idx + 1}"
 						obj = make_curve_object(seg_name, pts_3d, trk_col)
+						if obj is None:
+							continue
 						obj['gpx_type'] = 'track'
 						obj['gpx_name'] = trk_name
 						created_objects.append(obj)
@@ -852,6 +865,8 @@ class IMPORTGIS_OT_gpx_file(Operator):
 
 				if self.separate:
 					obj = make_curve_object(rte_name, pts_3d, rte_col)
+					if obj is None:
+						continue
 					obj['gpx_type'] = 'route'
 					obj['gpx_name'] = rte_name
 					created_objects.append(obj)

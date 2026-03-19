@@ -370,7 +370,11 @@ class IMPORTGIS_OT_shapefile(Operator):
 
 			if self.elevSource == 'OBJ':
 				scn = bpy.context.scene
-				elevObj = scn.objects[self.objElevName]
+				try:
+					elevObj = scn.objects[self.objElevName]
+				except KeyError:
+					self.report({'ERROR'}, "Elevation object '{}' not found in scene".format(self.objElevName))
+					return {'CANCELLED'}
 				rayCaster = DropToGround(scn, elevObj)
 
 			#Get fields

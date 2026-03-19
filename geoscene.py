@@ -189,7 +189,10 @@ class GeoScene():
 		dy = y - self.crsy
 		self.setOriginPrj(x, y, synch)
 		if updObjLoc:
-			self._moveObjLoc(dx, dy)
+			if useScale:
+				self._moveObjLoc(dx * self.scale, dy * self.scale)
+			else:
+				self._moveObjLoc(dx, dy)
 
 
 	def updOriginGeo(self, lon, lat, updObjLoc=True):
@@ -405,6 +408,7 @@ class GEOSCENE_OT_coords_viewer(Operator):
 			context.window.cursor_set('DEFAULT')
 			if context.area:
 				context.area.header_text_set(None)
+			context.window_manager.event_timer_remove(self.timer)
 			return {'CANCELLED'}
 		return {'RUNNING_MODAL'}
 
@@ -636,7 +640,8 @@ def setLon(self, lon):
 	if geoscn.hasOriginGeo:
 		geoscn.updOriginGeo(lon, geoscn.lat, updObjLoc=prefs.lockObj)
 	else:
-		geoscn.setOriginGeo(lon, geoscn.lat if geoscn.hasOriginGeo else 0.0)
+		lat = geoscn.scn.get(SK.LAT, 0.0)
+		geoscn.setOriginGeo(lon, lat)
 
 def setLat(self, lat):
 	geoscn = GeoScene()
@@ -644,7 +649,8 @@ def setLat(self, lat):
 	if geoscn.hasOriginGeo:
 		geoscn.updOriginGeo(geoscn.lon, lat, updObjLoc=prefs.lockObj)
 	else:
-		geoscn.setOriginGeo(geoscn.lon if geoscn.hasOriginGeo else 0.0, lat)
+		lon = geoscn.scn.get(SK.LON, 0.0)
+		geoscn.setOriginGeo(lon, lat)
 
 def getCrsx(self):
 	geoscn = GeoScene()
@@ -660,7 +666,8 @@ def setCrsx(self, x):
 	if geoscn.hasOriginPrj:
 		geoscn.updOriginPrj(x, geoscn.crsy, updObjLoc=prefs.lockObj)
 	else:
-		geoscn.setOriginPrj(x, geoscn.crsy if geoscn.hasOriginPrj else 0.0)
+		crsy = geoscn.scn.get(SK.CRSY, 0.0)
+		geoscn.setOriginPrj(x, crsy)
 
 def setCrsy(self, y):
 	geoscn = GeoScene()
@@ -668,7 +675,8 @@ def setCrsy(self, y):
 	if geoscn.hasOriginPrj:
 		geoscn.updOriginPrj(geoscn.crsx, y, updObjLoc=prefs.lockObj)
 	else:
-		geoscn.setOriginPrj(geoscn.crsx if geoscn.hasOriginPrj else 0.0, y)
+		crsx = geoscn.scn.get(SK.CRSX, 0.0)
+		geoscn.setOriginPrj(crsx, y)
 
 ################  PANEL ######################
 
