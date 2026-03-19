@@ -102,6 +102,9 @@ _zoom_jump_pending = False
 #Guard: suppress zoom callback while modal syncs the property
 _zoom_syncing = False
 
+#GPU shader cache — created once, reused every frame
+_cached_uniform_shader = None
+
 ####################
 
 class BaseMap(GeoScene):
@@ -407,7 +410,7 @@ def drawZoomBox(self, context):
 		p3 = (px, 0, 0)
 		p4 = (px, context.area.height, 0)
 		coords = [p1, p2, p3, p4]
-		shader = gpu.shader.from_builtin('UNIFORM_COLOR')
+		shader = _get_uniform_shader()
 		batch = batch_for_shader(shader, 'LINES', {"pos": coords})
 		shader.bind()
 		shader.uniform_float("color", (0, 0, 0, 1))
@@ -419,7 +422,7 @@ def drawZoomBox(self, context):
 		p3 = (self.zb_xmax, self.zb_ymax, 0)
 		p4 = (self.zb_xmax, self.zb_ymin, 0)
 		coords = [p1, p2, p2, p3, p3, p4, p4, p1]
-		shader = gpu.shader.from_builtin('UNIFORM_COLOR')
+		shader = _get_uniform_shader()
 		batch = batch_for_shader(shader, 'LINES', {"pos": coords})
 		shader.bind()
 		shader.uniform_float("color", (0, 0, 0, 1))
@@ -430,17 +433,33 @@ def drawZoomBox(self, context):
 _map_viewer_active = False
 _overlay_draw_handler = None
 
+
+def _get_uniform_shader():
+	"""Return the cached UNIFORM_COLOR shader, creating it if necessary.
+	Re-creates on GPU context loss (caught via exception on invalid shader)."""
+	global _cached_uniform_shader
+	if _cached_uniform_shader is not None:
+		try:
+			# Quick validity check: bind will raise if the GPU context was lost
+			_cached_uniform_shader.bind()
+			return _cached_uniform_shader
+		except Exception:
+			_cached_uniform_shader = None
+	_cached_uniform_shader = gpu.shader.from_builtin('UNIFORM_COLOR')
+	return _cached_uniform_shader
+
+
 def drawRoundedRect(x, y, w, h, color, radius=6):
 	"""Draw a rectangle with rounded corners"""
-	shader = gpu.shader.from_builtin('UNIFORM_COLOR')
+	shader = _get_uniform_shader()
+	shader.bind()
+	shader.uniform_float("color", color)
 	# Simple approach: draw center rect + edge rects (good enough for small radius)
 	verts = [
 		(x + radius, y, 0), (x + w - radius, y, 0),
 		(x + radius, y + h, 0), (x + w - radius, y + h, 0),
 	]
 	batch = batch_for_shader(shader, 'TRI_STRIP', {"pos": verts})
-	shader.bind()
-	shader.uniform_float("color", color)
 	batch.draw(shader)
 	# left edge
 	verts = [
@@ -507,7 +526,7 @@ def _drawInfoOverlay(context):
 	drawRoundedRect(px, py, panel_w, panel_h, (0.10, 0.10, 0.10, 0.75))
 
 	# Panel border
-	shader = gpu.shader.from_builtin('UNIFORM_COLOR')
+	shader = _get_uniform_shader()
 	border = [
 		(px, py, 0), (px + panel_w, py, 0),
 		(px + panel_w, py, 0), (px + panel_w, py + panel_h, 0),
@@ -618,9 +637,26 @@ def _list_layers(self, context):
 	return items
 
 def _on_source_layer_changed(self, context):
-	global _source_change_pending
+	global _source_change_pending, _zoom_syncing
 	if _map_viewer_active:
 		_source_change_pending = True
+	# Clamp zoom to new source/layer's valid range
+	srckey = self.src
+	if srckey in SOURCES:
+		layers = SOURCES[srckey]['layers']
+		lay = self.lay
+		if lay not in layers:
+			lay = next(iter(layers))
+		zmax = layers[lay]['zmax']
+		zmin = layers[lay]['zmin']
+		zoom = context.scene.get('zoom')
+		if zoom is not None:
+			clamped = max(zmin, min(zoom, zmax))
+			if clamped != zoom:
+				context.scene['zoom'] = clamped
+				_zoom_syncing = True
+				self.map_zoom = clamped
+				_zoom_syncing = False
 
 def _on_detail_offset_changed(self, context):
 	global _detail_changed_pending
@@ -902,7 +938,7 @@ class VIEW3D_OT_map_viewer(Operator):
 
 	def __del__(self):
 		if getattr(self, 'restart', False):
-			bpy.ops.view3d.map_start('INVOKE_DEFAULT', src=self.srckey, lay=self.laykey, grd=self.grdkey, dialog=self.dialog)
+			bpy.ops.view3d.map_start('INVOKE_DEFAULT', src=self.srckey, lay=self.laykey, grd=self.grdkey, dialog=self.dialog, recenter=False)
 
 
 	def invoke(self, context, event):
@@ -1078,7 +1114,6 @@ class VIEW3D_OT_map_viewer(Operator):
 		if not context.area:
 			return {'CANCELLED'}
 
-		context.area.tag_redraw()
 		scn = bpy.context.scene
 
 		if event.type == 'TIMER':
@@ -1134,6 +1169,8 @@ class VIEW3D_OT_map_viewer(Operator):
 				_exit_pending = False
 				self._cleanup_modal(context)
 				return {'CANCELLED'}
+			# Timer: always redraw to update progress text and overlay data
+			context.area.tag_redraw()
 			return {'PASS_THROUGH'}
 
 		#Pass through events when mouse is over sidebar or toolbar
@@ -1146,9 +1183,13 @@ class VIEW3D_OT_map_viewer(Operator):
 						region.y <= my <= region.y + region.height):
 						return {'PASS_THROUGH'}
 
+		# Track whether this event requires a redraw
+		needs_redraw = False
+
 		if event.type in ['WHEELUPMOUSE', 'NUMPAD_PLUS']:
 
 			if event.value == 'PRESS':
+				needs_redraw = True
 
 				if event.alt:
 					# map scale up
@@ -1197,6 +1238,7 @@ class VIEW3D_OT_map_viewer(Operator):
 		if event.type in ['WHEELDOWNMOUSE', 'NUMPAD_MINUS']:
 
 			if event.value == 'PRESS':
+				needs_redraw = True
 
 				if event.alt:
 					#map scale down
@@ -1249,13 +1291,16 @@ class VIEW3D_OT_map_viewer(Operator):
 
 			#Report mouse location coords in projeted crs
 			loc = mouseTo3d(context, event.mouse_region_x, event.mouse_region_y)
-			self.posx, self.posy = self.map.view3dToProj(loc.x, loc.y)
+			if loc is not None:
+				self.posx, self.posy = self.map.view3dToProj(loc.x, loc.y)
 
 			if self.zoomBoxMode:
 				self.zb_xmax, self.zb_ymax = event.mouse_region_x, event.mouse_region_y
+				needs_redraw = True  # crosshair cursor needs update
 
 			#Drag background image (edit its offset values)
 			if self.inMove:
+				needs_redraw = True  # map is being dragged
 				loc1 = mouseTo3d(context, self.x1, self.y1)
 				loc2 = mouseTo3d(context, event.mouse_region_x, event.mouse_region_y)
 				dlt = loc1 - loc2
@@ -1296,11 +1341,13 @@ class VIEW3D_OT_map_viewer(Operator):
 						self.objsLoc1 = [obj.location.copy() for obj in scn.objects if not obj.parent and obj != self.map.bkg]
 				#Tag that map is currently draging
 				self.inMove = True
+				needs_redraw = True
 
 			if event.value == 'RELEASE' and not self.zoomBoxMode:
 				wasMoving = self.inMove
 				self.inMove = False
 				if wasMoving and not event.ctrl:
+					needs_redraw = True
 					if not self.prefs.lockOrigin:
 						#Compute final shift
 						loc1 = mouseTo3d(context, self.x1, self.y1)
@@ -1314,8 +1361,10 @@ class VIEW3D_OT_map_viewer(Operator):
 			if event.value == 'PRESS' and self.zoomBoxMode:
 				self.zoomBoxDrag = True
 				self.zb_xmin, self.zb_ymin = event.mouse_region_x, event.mouse_region_y
+				needs_redraw = True
 
 			if event.value == 'RELEASE' and self.zoomBoxMode:
+				needs_redraw = True
 				#Get final zoom box
 				xmax = max(event.mouse_region_x, self.zb_xmin)
 				ymax = max(event.mouse_region_y, self.zb_ymin)
@@ -1349,6 +1398,7 @@ class VIEW3D_OT_map_viewer(Operator):
 
 
 		if event.type in ['LEFT_CTRL', 'RIGHT_CTRL']:
+			needs_redraw = True
 
 			if event.value == 'PRESS':
 				self._viewDstZ = context.region_data.view_distance
@@ -1364,6 +1414,7 @@ class VIEW3D_OT_map_viewer(Operator):
 		if event.value == 'PRESS' and event.type in ['NUMPAD_2', 'NUMPAD_4', 'NUMPAD_6', 'NUMPAD_8']:
 			if self.map.bkg is None:
 				return {'RUNNING_MODAL'}
+			needs_redraw = True
 			delta = self.map.bkg.scale.x * self.moveFactor
 			if event.type == 'NUMPAD_4':
 				if event.ctrl or self.prefs.lockOrigin:
@@ -1414,6 +1465,7 @@ class VIEW3D_OT_map_viewer(Operator):
 			self.zoomBoxMode = True
 			self.zb_xmax, self.zb_ymax = event.mouse_region_x, event.mouse_region_y
 			context.window.cursor_set('CROSSHAIR')
+			needs_redraw = True
 
 		#EXPORT
 		if event.type == 'E' and event.value == 'PRESS':
@@ -1429,11 +1481,13 @@ class VIEW3D_OT_map_viewer(Operator):
 				self.zoomBoxDrag = False
 				self.zoomBoxMode = False
 				context.window.cursor_set('DEFAULT')
+				needs_redraw = True
 			else:
 				self._cleanup_modal(context)
 				return {'CANCELLED'}
 
-
+		if needs_redraw:
+			context.area.tag_redraw()
 
 		return {'RUNNING_MODAL'}
 

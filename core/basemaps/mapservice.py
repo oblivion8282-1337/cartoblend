@@ -24,6 +24,7 @@ log = logging.getLogger(__name__)
 import math
 import threading
 import queue
+import collections
 import urllib.request
 import urllib.parse
 import urllib.error
@@ -629,6 +630,11 @@ class MapService():
 		#HTTP connection pool for persistent keep-alive connections
 		self._connPool = _ConnectionPool(timeout=TIMEOUT)
 
+		#LRU cache for decoded tile images (avoids repeated PNG/JPG decode)
+		self._decodeCacheMax = 500
+		self._decodeCache = collections.OrderedDict()
+		self._decodeCacheLock = threading.Lock()
+
 		#Load CDSE credentials from main thread if needed
 		if self.service == 'CDSE':
 			_cdse_auth.load_credentials()
@@ -975,6 +981,8 @@ class MapService():
 		buffSize : maximum number of tiles keeped in memory before put them in cache database
 		"""
 
+		FLUSH_SIZE = min(256, buffSize)
+
 		def downloading(laykey, tilesQueue, tilesData, toDstGrid):
 			'''Worker that process the queue and seed tilesData array [(x,y,z,data)]'''
 			#infinite loop that processes items into the queue
@@ -988,6 +996,7 @@ class MapService():
 				data = self.tileRequest(laykey, col, row, zoom, toDstGrid)
 				if data is not None:
 					tilesData.put( (col, row, zoom, data) ) #will block if the queue is full
+					del data
 				if cpt:
 					self.cptTiles += 1
 				#self.nTaskDone += 1
@@ -1002,15 +1011,27 @@ class MapService():
 
 		def putInCache(tilesData, jobs, cache):
 			while True:
-				if tilesData.full() or \
-				( (finished() or not self.running) and not tilesData.empty()):
-					data = [tilesData.get() for i in range(tilesData.qsize())]
-					with self.lock:
-						cache.putTiles(data)
-				if finished() and tilesData.empty():
+				qsize = tilesData.qsize()
+				is_done = finished()
+				should_flush = qsize >= FLUSH_SIZE or \
+					((is_done or not self.running) and qsize > 0)
+				if should_flush:
+					batch = []
+					while len(batch) < FLUSH_SIZE:
+						try:
+							batch.append(tilesData.get_nowait())
+						except queue.Empty:
+							break
+					if batch:
+						with self.lock:
+							cache.putTiles(batch)
+						del batch
+				elif is_done and tilesData.empty():
 					break
-				if not self.running:
+				elif not self.running:
 					break
+				else:
+					time.sleep(0.01)
 
 		if cpt:
 			#init cpt progress
@@ -1177,17 +1198,27 @@ class MapService():
 
 				col, row, z, data = tile
 
-				#TODO corrupted or empty tiles must be deleted from cache are fetched again
 				if data is None:
 					#create an empty tile
 					img = NpImage.new(tileSize, tileSize, bkgColor=EMPTY_TILE_COLOR)
 				else:
-					try:
-						img = NpImage(data)
-					except Exception as e:
-						log.error('Corrupted tile on cache', exc_info=True)
-						#create an empty tile if we are unable to get a valid stream
-						img = NpImage.new(tileSize, tileSize, bkgColor=CORRUPTED_TILE_COLOR)
+					cacheKey = (col, row, z)
+					with self._decodeCacheLock:
+						img = self._decodeCache.get(cacheKey)
+						if img is not None:
+							self._decodeCache.move_to_end(cacheKey)
+					if img is None:
+						try:
+							img = NpImage(data)
+						except Exception as e:
+							log.warning('Corrupted tile z%d x%d y%d in cache, evicting', z, col, row)
+							cache.deleteTiles([(col, row, z)])
+							img = NpImage.new(tileSize, tileSize, bkgColor=CORRUPTED_TILE_COLOR)
+						else:
+							with self._decodeCacheLock:
+								self._decodeCache[cacheKey] = img
+								if len(self._decodeCache) > self._decodeCacheMax:
+									self._decodeCache.popitem(last=False)
 
 
 				posx = (col - rq.firstCol) * tileSize

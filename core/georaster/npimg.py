@@ -246,10 +246,12 @@ class NpImage():
 			#build a random name to make the function thread safe
 			vsipath = '/vsimem/' + ''.join(random.choice('abcdefghijklmnopqrstuvwxyz') for i in range(5))
 			gdal.FileFromMemBuffer(vsipath, data)
-			ds = gdal.Open(vsipath)
-			data = self._npFromGDAL(ds)
-			ds = None
-			gdal.Unlink(vsipath)
+			try:
+				ds = gdal.Open(vsipath)
+				data = self._npFromGDAL(ds)
+				ds = None
+			finally:
+				gdal.Unlink(vsipath)
 
 		return data
 

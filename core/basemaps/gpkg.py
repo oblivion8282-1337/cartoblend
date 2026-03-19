@@ -24,6 +24,7 @@ import io
 import math
 import datetime
 import sqlite3
+import threading
 
 
 #http://www.geopackage.org/spec/#tiles
@@ -41,6 +42,9 @@ class GeoPackage():
 	def __init__(self, path, tm):
 		self.dbPath = path
 		self.name = os.path.splitext(os.path.basename(path))[0]
+
+		# Thread-local storage for per-thread SQLite connections
+		self._local = threading.local()
 
 		#Get props from TileMatrix object
 		self.auth, self.code = tm.CRS.split(':')
@@ -60,15 +64,35 @@ class GeoPackage():
 			self.insertTileMatrixSet()
 
 
+	def _get_connection(self, detect_types=0):
+		"""Return a cached per-thread SQLite connection."""
+		attr = '_conn_dt' if detect_types else '_conn'
+		conn = getattr(self._local, attr, None)
+		if conn is None:
+			conn = sqlite3.connect(self.dbPath, detect_types=detect_types)
+			setattr(self._local, attr, conn)
+		return conn
+
+	def close(self):
+		"""Close all cached connections on the current thread."""
+		for attr in ('_conn', '_conn_dt'):
+			conn = getattr(self._local, attr, None)
+			if conn is not None:
+				try:
+					conn.close()
+				except Exception:
+					pass
+				setattr(self._local, attr, None)
+
+
 	def isGPKG(self):
 		if not os.path.exists(self.dbPath):
 			return False
-		db = sqlite3.connect(self.dbPath)
+		db = self._get_connection()
 
 		#check application id
 		app_id = db.execute("PRAGMA application_id").fetchone()
 		if not app_id[0] == 1196437808:
-			db.close()
 			return False
 		#quick check of table schema
 		try:
@@ -79,16 +103,14 @@ class GeoPackage():
 			db.execute('SELECT zoom_level, tile_column, tile_row, tile_data FROM gpkg_tiles LIMIT 1')
 		except Exception as e:
 			log.error('Incorrect GPKG schema', exc_info=True)
-			db.close()
 			return False
 		else:
-			db.close()
 			return True
 
 
 	def create(self):
 		"""Create default geopackage schema on the database."""
-		db = sqlite3.connect(self.dbPath) #this attempt will create a new file if not exist
+		db = self._get_connection()
 		cursor = db.cursor()
 
 		# Add GeoPackage version 1.0 ("GP10" in ASCII) to the Sqlite header
@@ -161,11 +183,16 @@ class GeoPackage():
 				UNIQUE (zoom_level, tile_column, tile_row));
 		""")
 
-		db.close()
+		cursor.execute("""
+			CREATE INDEX IF NOT EXISTS idx_tiles_zxy
+			ON gpkg_tiles (zoom_level, tile_column, tile_row);
+		""")
+
+		db.commit()
 
 
 	def insertMetadata(self):
-		db = sqlite3.connect(self.dbPath)
+		db = self._get_connection()
 		query = """INSERT INTO gpkg_contents (
 					table_name, data_type,
 					identifier, description,
@@ -174,11 +201,10 @@ class GeoPackage():
 				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);"""
 		db.execute(query, ("gpkg_tiles", "tiles", self.name, "Created with CartoBlend", self.xmin, self.ymin, self.xmax, self.ymax, self.code))
 		db.commit()
-		db.close()
 
 
 	def insertCRS(self, code, name, auth='EPSG', wkt=''):
-		db = sqlite3.connect(self.dbPath)
+		db = self._get_connection()
 		db.execute(""" INSERT INTO gpkg_spatial_ref_sys (
 					srs_id,
 					organization,
@@ -188,11 +214,10 @@ class GeoPackage():
 				VALUES (?, ?, ?, ?, ?)
 			""", (code, auth, code, name, wkt))
 		db.commit()
-		db.close()
 
 
 	def insertTileMatrixSet(self):
-		db = sqlite3.connect(self.dbPath)
+		db = self._get_connection()
 
 		#Tile matrix set
 		query = """INSERT OR REPLACE INTO gpkg_tile_matrix_set (
@@ -218,7 +243,6 @@ class GeoPackage():
 
 
 		db.commit()
-		db.close()
 
 
 	def hasTile(self, x, y, z):
@@ -229,11 +253,9 @@ class GeoPackage():
 
 	def getTile(self, x, y, z):
 		'''return tilde_data if tile exists otherwie return None'''
-		#connect with detect_types parameter for automatically convert date to Python object
-		db = sqlite3.connect(self.dbPath, detect_types=sqlite3.PARSE_DECLTYPES)
+		db = self._get_connection(detect_types=sqlite3.PARSE_DECLTYPES)
 		query = 'SELECT tile_data, last_modified FROM gpkg_tiles WHERE zoom_level=? AND tile_column=? AND tile_row=?'
 		result = db.execute(query, (z, x, y)).fetchone()
-		db.close()
 		if result is None:
 			return None
 		timeDelta = datetime.datetime.now() - result[1]
@@ -242,12 +264,11 @@ class GeoPackage():
 		return result[0]
 
 	def putTile(self, x, y, z, data):
-		db = sqlite3.connect(self.dbPath)
+		db = self._get_connection()
 		query = """INSERT OR REPLACE INTO gpkg_tiles
 		(tile_column, tile_row, zoom_level, tile_data) VALUES (?,?,?,?)"""
 		db.execute(query, (x, y, z, data))
 		db.commit()
-		db.close()
 
 
 	def listExistingTiles(self, tiles):
@@ -255,7 +276,7 @@ class GeoPackage():
 		input : tiles list [(x,y,z)]
 		output : tiles list set [(x,y,z)] of existing records in cache db"""
 
-		db = sqlite3.connect(self.dbPath, detect_types=sqlite3.PARSE_DECLTYPES)
+		db = self._get_connection(detect_types=sqlite3.PARSE_DECLTYPES)
 
 		# split out the axises
 		x, y, z = zip(*tiles)
@@ -274,8 +295,6 @@ class GeoPackage():
 			)
 		).fetchall()
 
-		db.close()
-
 		return set(result)
 
 	def listMissingTiles(self, tiles):
@@ -287,7 +306,7 @@ class GeoPackage():
 		"""tiles = list of (x,y,z) tuple
 		return list of (x,y,z,data) tuple"""
 
-		db = sqlite3.connect(self.dbPath, detect_types=sqlite3.PARSE_DECLTYPES)
+		db = self._get_connection(detect_types=sqlite3.PARSE_DECLTYPES)
 
 		# split out the axises
 		x, y, z = zip(*tiles)
@@ -306,16 +325,20 @@ class GeoPackage():
 			)
 		).fetchall()
 
-		db.close()
-
 		return result
 
 
 	def putTiles(self, tiles):
 		"""tiles = list of (x,y,z,data) tuple"""
-		db = sqlite3.connect(self.dbPath)
+		db = self._get_connection()
 		query = """INSERT OR REPLACE INTO gpkg_tiles
 		(tile_column, tile_row, zoom_level, tile_data) VALUES (?,?,?,?)"""
 		db.executemany(query, tiles)
 		db.commit()
-		db.close()
+
+	def deleteTiles(self, tiles):
+		"""Delete specific tiles from cache. tiles = list of (col, row, zoom)"""
+		db = self._get_connection()
+		query = "DELETE FROM gpkg_tiles WHERE tile_column=? AND tile_row=? AND zoom_level=?"
+		db.executemany(query, tiles)
+		db.commit()
