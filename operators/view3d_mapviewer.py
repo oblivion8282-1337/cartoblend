@@ -1778,7 +1778,7 @@ class VIEW3D_OT_map_resume(bpy.types.Operator):
 			return {'CANCELLED'}
 		bpy.ops.view3d.map_viewer('INVOKE_DEFAULT',
 			srckey=_last_map_src, laykey=_last_map_lay, grdkey=_last_map_grd,
-			recenter=True)
+			recenter=False)
 		return {'FINISHED'}
 
 
