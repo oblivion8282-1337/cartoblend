@@ -67,9 +67,15 @@ class GeoPackage():
 
 
 	def _get_connection(self, detect_types=0):
-		"""Return a cached per-thread SQLite connection."""
+		"""Return a cached per-thread SQLite connection, reconnecting if closed."""
 		attr = '_conn_dt' if detect_types else '_conn'
 		conn = getattr(self._local, attr, None)
+		if conn is not None:
+			try:
+				conn.execute("SELECT 1")
+			except Exception:
+				conn = None
+				setattr(self._local, attr, None)
 		if conn is None:
 			conn = sqlite3.connect(self.dbPath, detect_types=detect_types)
 			setattr(self._local, attr, conn)
