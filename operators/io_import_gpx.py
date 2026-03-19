@@ -407,11 +407,9 @@ def _get_or_create_route_geonodes():
 	prof_cmp.location = (-200, -550)
 	prof_cmp.data_type = 'INT'
 	prof_cmp.operation = 'GREATER_EQUAL'
-	prof_cmp.inputs[2].default_value = 1  # compare value
 	links.new(inp.outputs['Profile'], prof_cmp.inputs[2])  # A = Profile
 	# Actually: A >= 1 → Tube
 	# Inputs for INT compare: inputs[2] = A (INT), inputs[3] = B (INT)
-	links.new(inp.outputs['Profile'], prof_cmp.inputs[2])
 	prof_cmp.inputs[3].default_value = 1
 
 	prof_switch = nodes.new('GeometryNodeSwitch')

@@ -332,8 +332,9 @@ class NpImage():
 			data = gdal.VSIFReadL(1, size, f)
 			gdal.VSIFCloseL(f)
 			# Cleanup
-			gdal.Unlink(vsiname)
+			out = None
 			mem = None
+			gdal.Unlink(vsiname)
 
 		return data
 

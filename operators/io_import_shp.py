@@ -335,6 +335,10 @@ class IMPORTGIS_OT_shapefile(Operator):
 		return context.mode == 'OBJECT'
 
 	def execute(self, context):
+		# FIX: initialise to None so the outer finally can safely free them
+		# even if a CANCELLED return happens before bmesh.new() is called
+		bm = None
+		finalBm = None
 		try:
 
 			prefs = bpy.context.preferences.addons[PKG].preferences
@@ -670,9 +674,6 @@ class IMPORTGIS_OT_shapefile(Operator):
 					bm.to_mesh(mesh)
 					bm.clear()
 
-					#Validate new mesh
-					mesh.validate(verbose=False)
-
 					#Place obj
 					obj = bpy.data.objects.new(name, mesh)
 					layer.objects.link(obj)
@@ -720,6 +721,7 @@ class IMPORTGIS_OT_shapefile(Operator):
 				if self.fieldExtrudeName:
 					bm.free()
 					bm = finalBm
+					finalBm = None
 
 				if prefs.mergeDoubles:
 					bmesh.ops.remove_doubles(bm, verts=bm.verts, dist=0.0001)
@@ -736,6 +738,7 @@ class IMPORTGIS_OT_shapefile(Operator):
 
 			#free the bmesh
 			bm.free()
+			bm = None
 
 			t = perf_clock() - t0
 			log.info('Build in %f seconds' % t)
@@ -752,6 +755,17 @@ class IMPORTGIS_OT_shapefile(Operator):
 				bpy.context.window.cursor_set('DEFAULT')
 			except Exception:
 				pass
+			# FIX: free bmesh objects if an early CANCELLED return left them allocated
+			if bm is not None:
+				try:
+					bm.free()
+				except Exception:
+					pass
+			if finalBm is not None:
+				try:
+					finalBm.free()
+				except Exception:
+					pass
 
 classes = [
 	IMPORTGIS_OT_shapefile_file_dialog,

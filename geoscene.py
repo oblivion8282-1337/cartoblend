@@ -112,10 +112,10 @@ class GeoScene():
 			raise ValueError("Scene origin coordinate is unset")
 
 	def projToView3d(self, dx, dy):
-		'''Convert view3d coords to crs coords'''
+		'''Convert crs coords to view3d coords'''
 		if self.hasOriginPrj:
-			x = (dx * self.scale) - self.crsx
-			y = (dy * self.scale) - self.crsy
+			x = (dx - self.crsx) / self.scale
+			y = (dy - self.crsy) / self.scale
 			return x, y
 		else:
 			raise ValueError("Scene origin coordinate is unset")
@@ -181,7 +181,7 @@ class GeoScene():
 			self.delOriginGeo()
 			log.warning('Origin geo has been deleted because coordinate synchronization is disable')
 
-	def updOriginPrj(self, x, y, updObjLoc=True, synch=True):
+	def updOriginPrj(self, x, y, updObjLoc=True, synch=True, useScale=True):
 		'''Update/move scene origin passing absolute coordinates'''
 		if not self.hasOriginPrj:
 			raise ValueError("Cannot update an unset origin.")

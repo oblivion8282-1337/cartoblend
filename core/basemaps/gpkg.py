@@ -336,7 +336,7 @@ class GeoPackage():
 				"WHERE julianday() - julianday(last_modified) < ?" \
 				"AND zoom_level BETWEEN ? AND ? AND tile_column BETWEEN ? AND ? AND tile_row BETWEEN ? AND ?"
 
-		result = db.execute(
+		rows = db.execute(
 			query,
 			(
 				GeoPackage.MAX_DAYS,
@@ -346,7 +346,8 @@ class GeoPackage():
 			)
 		).fetchall()
 
-		return result
+		found = {(r[0], r[1], r[2]): r[3] for r in rows}
+		return [(x, y, z, found.get((x, y, z))) for x, y, z in tiles]
 
 
 	def putTiles(self, tiles):

@@ -771,7 +771,7 @@ class OSM_IMPORT():
 		vgroupsObj = {}
 
 		#######
-		def seed(id, tags, pts):
+		def seed(id, tags, pts, extags):
 			'''
 			Sub funtion :
 				1. create a bmesh from [pts]
@@ -1032,7 +1032,7 @@ class OSM_IMPORT():
 					continue
 
 				pt = (float(node.lon), float(node.lat))
-				seed(node.id, node.tags, [pt])
+				seed(node.id, node.tags, [pt], extags)
 
 
 		if 'way' in self.featureType:
@@ -1045,7 +1045,7 @@ class OSM_IMPORT():
 					continue
 
 				pts = [(float(node.lon), float(node.lat)) for node in way.nodes]
-				seed(way.id, way.tags, pts)
+				seed(way.id, way.tags, pts, extags)
 
 
 

@@ -666,7 +666,7 @@ def _on_source_layer_changed(self, context):
 			lay = next(iter(layers))
 		zmax = layers[lay]['zmax']
 		zmin = layers[lay]['zmin']
-		zoom = context.scene.get('zoom')
+		zoom = context.scene.get(SK.ZOOM)
 		if zoom is not None:
 			clamped = max(zmin, min(zoom, zmax))
 			if clamped != zoom:
@@ -1057,7 +1057,10 @@ class VIEW3D_OT_map_viewer(Operator):
 			pass
 		if context.area:
 			context.area.header_text_set(None)
-		context.window_manager.event_timer_remove(self.timer)
+		try:
+			context.window_manager.event_timer_remove(self.timer)
+		except Exception:
+			pass
 
 	def _do_export(self, context):
 		"""Export current basemap tiles as textured mesh."""
@@ -1176,29 +1179,30 @@ class VIEW3D_OT_map_viewer(Operator):
 				if _goto_prev_zoom is not None and _goto_prev_zoom != self.map.zoom:
 					resFactor = self.map.tm.getFromToResFac(_goto_prev_zoom, self.map.zoom)
 					context.region_data.view_distance *= resFactor
+				_goto_prev_zoom = None
 				self.map.get()
+			#Check if N-Panel "Exit" was clicked
+			if _exit_pending:
+				_exit_pending = False
+				self._cleanup_modal(context)
+				return {'CANCELLED'}
+			#Check if N-Panel source/layer was changed
+			elif _source_change_pending:
+				_source_change_pending = False
+				self._cleanup_modal(context)
+				self.restart = True
+				return {'FINISHED'}
 			#Check if N-Panel "Export" button was clicked
-			if _export_pending:
+			elif _export_pending:
 				_export_pending = False
 				if not self.map.srv.running and self.map.mosaic is not None:
 					return self._do_export(context)
 				else:
 					self.progress = 'Tiles still loading, please wait…'
 			#Check if N-Panel detail offset was changed
-			if _detail_changed_pending:
+			elif _detail_changed_pending:
 				_detail_changed_pending = False
 				self.map.get()
-			#Check if N-Panel source/layer was changed
-			if _source_change_pending:
-				_source_change_pending = False
-				self._cleanup_modal(context)
-				self.restart = True
-				return {'FINISHED'}
-			#Check if N-Panel "Exit" was clicked
-			if _exit_pending:
-				_exit_pending = False
-				self._cleanup_modal(context)
-				return {'CANCELLED'}
 			# Timer: always redraw to update progress text and overlay data
 			context.area.tag_redraw()
 			return {'PASS_THROUGH'}
@@ -1413,6 +1417,8 @@ class VIEW3D_OT_map_viewer(Operator):
 				cx = xmin + w/2
 				cy = ymin + h/2
 				loc = mouseTo3d(context, cx, cy)
+				if loc is None:
+					return {'PASS_THROUGH'}
 				#Compute target resolution
 				px_diag = math.sqrt(context.area.width**2 + context.area.height**2)
 				mapRes = self.map.tm.getRes(self.map.zoom)
