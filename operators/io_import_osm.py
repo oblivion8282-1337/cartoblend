@@ -977,6 +977,15 @@ class OSM_IMPORT():
 					objName = None
 					offset = 0
 
+					def _ensure_dest_layers(src, dst):
+						"""Ensure dst bmesh has same face layers as src."""
+						for sl in src.faces.layers.float:
+							if dst.faces.layers.float.get(sl.name) is None:
+								dst.faces.layers.float.new(sl.name)
+						for sl in src.faces.layers.int:
+							if dst.faces.layers.int.get(sl.name) is None:
+								dst.faces.layers.int.new(sl.name)
+
 					if self.filterTags:
 
 						#group by tags (there could be some duplicates)
@@ -985,6 +994,7 @@ class OSM_IMPORT():
 							if k in extags:
 								objName = type + ':' + k
 								kbm = bmeshes.setdefault(objName, bmesh.new())
+								_ensure_dest_layers(bm, kbm)
 								offset = len(kbm.verts)
 								joinBmesh(bm, kbm)
 								break  # assign to first matching tag only
@@ -993,6 +1003,7 @@ class OSM_IMPORT():
 						#group all into one unique mesh
 						objName = type
 						_bm = bmeshes.setdefault(objName, bmesh.new())
+						_ensure_dest_layers(bm, _bm)
 						offset = len(_bm.verts)
 						joinBmesh(bm, _bm)
 

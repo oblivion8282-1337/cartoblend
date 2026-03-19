@@ -454,7 +454,7 @@ _overlay_draw_handler = None
 def _get_uniform_shader():
 	"""Return the cached UNIFORM_COLOR shader, creating it if necessary.
 	Re-creates on GPU context loss (caught via exception on invalid shader)."""
-	global _cached_uniform_shader
+	global _cached_uniform_shader, _rect_batch_cache_key, _rect_batch_cache_batches
 	if _cached_uniform_shader is not None:
 		try:
 			# Quick validity check: bind will raise if the GPU context was lost
@@ -463,6 +463,9 @@ def _get_uniform_shader():
 		except Exception:
 			_cached_uniform_shader = None
 	_cached_uniform_shader = gpu.shader.from_builtin('UNIFORM_COLOR')
+	# Invalidate batch caches that were built with the old shader
+	_rect_batch_cache_key = None
+	_rect_batch_cache_batches = None
 	return _cached_uniform_shader
 
 
