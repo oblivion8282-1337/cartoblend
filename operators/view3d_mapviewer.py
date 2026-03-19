@@ -419,6 +419,11 @@ def drawZoomBox(self, context):
 	if not context.area:
 		return
 
+	# NOTE: Batches are intentionally NOT cached here. The crosshair and zoom-box
+	# rectangle coordinates change every MOUSEMOVE event, so a cache key would
+	# change just as often and provide no benefit. Only 1–2 tiny batches are
+	# created per draw call, making the overhead negligible.
+
 	if self.zoomBoxMode and not self.zoomBoxDrag:
 		# before selection starts draw infinite cross
 		px, py = self.zb_xmax, self.zb_ymax

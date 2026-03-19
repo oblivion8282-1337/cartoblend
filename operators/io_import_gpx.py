@@ -982,6 +982,10 @@ _draw_handler = None
 # Module-level shader cache — avoids recreating the shader every frame
 _gpx_shader_cache = None
 
+# Batch cache for GPX overlay — invalidated when the view matrix changes
+_gpx_overlay_cache_matrix = None
+_gpx_overlay_cache_batch = None
+
 
 def _get_gpx_shader():
 	global _gpx_shader_cache
@@ -997,6 +1001,8 @@ def _get_gpx_shader():
 
 def _draw_gpx_overlay():
 	"""Draw all GPX routes as thick colored lines on top of the viewport."""
+	global _gpx_overlay_cache_matrix, _gpx_overlay_cache_batch
+
 	context = bpy.context
 	if context.area is None or context.area.type != 'VIEW_3D':
 		return
@@ -1006,6 +1012,24 @@ def _draw_gpx_overlay():
 	if region is None or rv3d is None:
 		return
 
+	# Build a cache key from the view matrix + region size so the batch is only
+	# rebuilt when the user actually moves/zooms the viewport.
+	current_matrix = rv3d.view_matrix.to_tuple() + (region.width, region.height)
+
+	shader = _get_gpx_shader()
+
+	if _gpx_overlay_cache_batch is not None and current_matrix == _gpx_overlay_cache_matrix:
+		# Draw cached batch — no scene scan or vertex rebuild needed
+		gpu.state.blend_set('ALPHA')
+		gpu.state.line_width_set(4.0)
+		shader.bind()
+		shader.uniform_float("color", (1.0, 0.3, 0.0, 0.9))
+		_gpx_overlay_cache_batch.draw(shader)
+		gpu.state.line_width_set(1.0)
+		gpu.state.blend_set('NONE')
+		return
+
+	# View matrix changed — rebuild batch from scene objects
 	# Collect screen-space line segments from all GPX track/route objects
 	segments = []  # list of lists of 2D points per track
 	for obj in context.scene.objects:
@@ -1051,11 +1075,13 @@ def _draw_gpx_overlay():
 	if not all_verts:
 		return
 
-	shader = _get_gpx_shader()
+	batch = batch_for_shader(shader, 'LINES', {"pos": all_verts})
+	_gpx_overlay_cache_matrix = current_matrix
+	_gpx_overlay_cache_batch = batch
+
 	gpu.state.blend_set('ALPHA')
 	gpu.state.line_width_set(4.0)
-
-	batch = batch_for_shader(shader, 'LINES', {"pos": all_verts})
+	shader.bind()
 	shader.uniform_float("color", (1.0, 0.3, 0.0, 0.9))  # orange
 	batch.draw(shader)
 

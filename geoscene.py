@@ -33,6 +33,11 @@ from .operators.utils import mouseTo3d
 
 PKG = __package__
 
+# Cache for _moveObjLoc — rebuilt at most every 0.5 s to avoid iterating all
+# scene objects on every pan event.
+_topParents_cache = None
+_topParents_time = 0
+
 '''
 Policy :
 This module manages in priority the CRS coordinates of the scene's origin and
@@ -224,8 +229,13 @@ class GeoScene():
 
 
 	def _moveObjLoc(self, dx, dy):
-		topParents = [obj for obj in self.scn.objects if not obj.parent]
-		for obj in topParents:
+		import time
+		global _topParents_cache, _topParents_time
+		now = time.monotonic()
+		if _topParents_cache is None or (now - _topParents_time) > 0.5:
+			_topParents_cache = [obj for obj in self.scn.objects if not obj.parent]
+			_topParents_time = now
+		for obj in _topParents_cache:
 			obj.location.x -= dx
 			obj.location.y -= dy
 
