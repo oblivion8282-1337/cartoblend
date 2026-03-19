@@ -423,9 +423,10 @@ def _apply_building_geonodes(obj):
 	# Assign materials: slot 0 = rooftop, slot 1 = facade
 	mat_roof = _get_or_create_rooftop_material()
 	mat_facade = _get_or_create_facade_material()
-	if not any(s.material == mat_roof for s in obj.material_slots):
+	existing_mats = {s.material for s in obj.material_slots if s.material}
+	if mat_roof not in existing_mats:
 		obj.data.materials.append(mat_roof)
-	if not any(s.material == mat_facade for s in obj.material_slots):
+	if mat_facade not in existing_mats:
 		obj.data.materials.append(mat_facade)
 
 
@@ -1083,32 +1084,30 @@ class OSM_IMPORT():
 				bpy.context.scene.collection.children.link(osm_col)
 			relations = bpy.data.collections.new('Relations')
 			osm_col.children.link(relations)
-			importedObjects = osm_col.objects
+			# Build ID lookup dict for O(1) relation member matching
+			obj_id_map = {}
+			for obj in osm_col.objects:
+				try:
+					obj_id_map[int(obj['id'])] = obj
+				except (ValueError, KeyError):
+					pass
 
 			for rel in result.relations:
 
 				name = rel.tags.get('name', str(rel.id))
 				try:
-					relation = relations.children[name] #or bpy.data.collections[name]
+					relation = relations.children[name]
 				except KeyError:
 					relation = bpy.data.collections.new(name)
 					relations.children.link(relation)
 
 				for member in rel.members:
-
-					#todo: remove duplicate members
-
-					for obj in importedObjects:
-						#id = int(obj.get('id', -1))
+					obj = obj_id_map.get(member.ref)
+					if obj is not None:
 						try:
-							id = int(obj['id'])
-						except (ValueError, KeyError):
-							id = None
-						if id == member.ref:
-							try:
-								relation.objects.link(obj)
-							except Exception as e:
-								log.error('Object {} already in group {}'.format(obj.name, name), exc_info=True)
+							relation.objects.link(obj)
+						except Exception as e:
+							log.error('Object {} already in group {}'.format(obj.name, name), exc_info=True)
 
 				#cleanup
 				if not relation.objects:

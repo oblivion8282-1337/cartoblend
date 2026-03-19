@@ -1235,7 +1235,7 @@ class MapService():
 		if outCRS is not None and outCRS != tm.CRS:
 			if cpt:
 				self.status = 4
-			time.sleep(0.1) #make sure client have enough time to get the new status...
+			#Status update is read asynchronously, no sleep needed
 
 			if not bigTiff:
 				mosaic = NpImage(reprojImg(tm.CRS, outCRS, mosaic.toGDAL(), sqPx=True, resamplAlg=self.RESAMP_ALG))
