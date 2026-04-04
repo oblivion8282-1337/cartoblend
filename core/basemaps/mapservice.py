@@ -735,6 +735,14 @@ class MapService():
 			else:
 				quadkey = self.getQuadKey(col, row, zoom)
 				url = url.replace("{QUADKEY}", quadkey)
+			for placeholder, attr in (
+				('{STADIA_API_KEY}', 'stadia_api_key'),
+				('{MAPBOX_TOKEN}', 'mapbox_token'),
+				('{MAPTILER_KEY}', 'maptiler_tile_key'),
+				('{THUNDERFOREST_KEY}', 'thunderforest_api_key'),
+			):
+				if placeholder in url:
+					url = url.replace(placeholder, getattr(settings, attr, '') or '')
 
 		if self.service == 'WMTS':
 			url = self.urlTemplate['BASE_URL']

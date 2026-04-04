@@ -34,6 +34,10 @@ CREDENTIALS_FILE = os.path.join(APP_DATA, 'credentials.json')
 _CREDENTIAL_KEYS = [
 	'opentopography_api_key',
 	'maptiler_api_key',
+	'stadia_api_key',
+	'mapbox_token',
+	'maptiler_tile_key',
+	'thunderforest_api_key',
 	'cdse_client_id',
 	'cdse_client_secret',
 ]
@@ -339,6 +343,46 @@ class BGIS_PREFS(AddonPreferences):
 		update = updateMapTilerApiKey
 	)
 
+	def updateMapboxToken(self, context):
+		settings.mapbox_token = self.mapbox_token
+		_sync_credential('mapbox_token', self.mapbox_token)
+
+	mapbox_token: StringProperty(
+		name = "",
+		description = "Access token for Mapbox (register free at mapbox.com)",
+		update = updateMapboxToken
+	)
+
+	def updateMaptilerTileKey(self, context):
+		settings.maptiler_tile_key = self.maptiler_tile_key
+		_sync_credential('maptiler_tile_key', self.maptiler_tile_key)
+
+	maptiler_tile_key: StringProperty(
+		name = "",
+		description = "API key for MapTiler map tiles (register free at maptiler.com)",
+		update = updateMaptilerTileKey
+	)
+
+	def updateThunderforestApiKey(self, context):
+		settings.thunderforest_api_key = self.thunderforest_api_key
+		_sync_credential('thunderforest_api_key', self.thunderforest_api_key)
+
+	thunderforest_api_key: StringProperty(
+		name = "",
+		description = "API key for Thunderforest (register free at thunderforest.com)",
+		update = updateThunderforestApiKey
+	)
+
+	def updateStadiaApiKey(self, context):
+		settings.stadia_api_key = self.stadia_api_key
+		_sync_credential('stadia_api_key', self.stadia_api_key)
+
+	stadia_api_key: StringProperty(
+		name = "",
+		description = "API key for Stadia Maps (register free at stadiamaps.com)",
+		update = updateStadiaApiKey
+	)
+
 	def updateCdseClientId(self, context):
 		_sync_credential('cdse_client_id', self.cdse_client_id)
 
@@ -468,6 +512,22 @@ class BGIS_PREFS(AddonPreferences):
 		row = box.row().split(factor=0.2)
 		row.label(text="MapTiler API Key")
 		row.prop(self, "maptiler_api_key")
+
+		#Map tile provider API keys
+		box2 = box.box()
+		box2.label(text="Map Tile Providers (optional — register for free tiers)", icon='WORLD_DATA')
+		row = box2.row().split(factor=0.2)
+		row.label(text="Mapbox Token")
+		row.prop(self, "mapbox_token")
+		row = box2.row().split(factor=0.2)
+		row.label(text="MapTiler Tile Key")
+		row.prop(self, "maptiler_tile_key")
+		row = box2.row().split(factor=0.2)
+		row.label(text="Thunderforest Key")
+		row.prop(self, "thunderforest_api_key")
+		row = box2.row().split(factor=0.2)
+		row.label(text="Stadia Maps Key")
+		row.prop(self, "stadia_api_key")
 
 		#CDSE
 		box2 = box.box()

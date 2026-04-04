@@ -351,6 +351,104 @@ SOURCES = {
 	},
 
 
+	"MAPBOX" : {
+		"name" : 'Mapbox',
+		"description" : 'Mapbox — free tier 200k static tile requests/month (registration required)',
+		"service": 'TMS',
+		"grid": 'WM',
+		"quadTree": False,
+		"layers" : {
+			"SATELLITE" : {"urlKey" : 'mapbox/satellite-v9', "name" : 'Satellite', "description" : 'Global satellite and aerial imagery', "format" : 'jpg', "zmin" : 0, "zmax" : 22},
+			"SAT_STREETS" : {"urlKey" : 'mapbox/satellite-streets-v12', "name" : 'Satellite Streets', "description" : 'Satellite imagery with street labels', "format" : 'jpg', "zmin" : 0, "zmax" : 22},
+			"STREETS" : {"urlKey" : 'mapbox/streets-v12', "name" : 'Streets', "description" : 'Classic street map', "format" : 'png', "zmin" : 0, "zmax" : 22},
+			"OUTDOORS" : {"urlKey" : 'mapbox/outdoors-v12', "name" : 'Outdoors', "description" : 'Trails, contours, outdoor features', "format" : 'png', "zmin" : 0, "zmax" : 22},
+			"LIGHT" : {"urlKey" : 'mapbox/light-v11', "name" : 'Light', "description" : 'Light basemap for overlays', "format" : 'png', "zmin" : 0, "zmax" : 22},
+			"DARK" : {"urlKey" : 'mapbox/dark-v11', "name" : 'Dark', "description" : 'Dark basemap for overlays', "format" : 'png', "zmin" : 0, "zmax" : 22},
+			"NAV_DAY" : {"urlKey" : 'mapbox/navigation-day-v1', "name" : 'Navigation Day', "description" : 'Navigation-optimised day style', "format" : 'png', "zmin" : 0, "zmax" : 22},
+			"NAV_NIGHT" : {"urlKey" : 'mapbox/navigation-night-v1', "name" : 'Navigation Night', "description" : 'Navigation-optimised night style', "format" : 'png', "zmin" : 0, "zmax" : 22}
+		},
+		"urlTemplate": "https://api.mapbox.com/styles/v1/{LAY}/tiles/256/{Z}/{X}/{Y}?access_token={MAPBOX_TOKEN}",
+		"referer": "https://www.mapbox.com"
+	},
+
+
+	"MAPTILER" : {
+		"name" : 'MapTiler',
+		"description" : 'MapTiler — free tier 100k map loads/month, no credit card (registration required)',
+		"service": 'TMS',
+		"grid": 'WM',
+		"quadTree": False,
+		"layers" : {
+			"SATELLITE" : {"urlKey" : 'satellite-v2', "name" : 'Satellite', "description" : 'Global satellite imagery', "format" : 'jpg', "zmin" : 0, "zmax" : 20},
+			"HYBRID" : {"urlKey" : 'hybrid', "name" : 'Satellite Hybrid', "description" : 'Satellite with labels and roads', "format" : 'jpg', "zmin" : 0, "zmax" : 20},
+			"STREETS" : {"urlKey" : 'streets-v2', "name" : 'Streets', "description" : 'Classic street map', "format" : 'png', "zmin" : 0, "zmax" : 20},
+			"BASIC" : {"urlKey" : 'basic-v2', "name" : 'Basic', "description" : 'Minimalist flat design', "format" : 'png', "zmin" : 0, "zmax" : 20},
+			"BRIGHT" : {"urlKey" : 'bright-v2', "name" : 'Bright', "description" : 'High-contrast navigation style', "format" : 'png', "zmin" : 0, "zmax" : 20},
+			"TOPO" : {"urlKey" : 'topo-v2', "name" : 'Topo', "description" : 'Topographic map with contours', "format" : 'png', "zmin" : 0, "zmax" : 20},
+			"OUTDOOR" : {"urlKey" : 'outdoor-v2', "name" : 'Outdoor', "description" : 'Hiking, peaks, isolines', "format" : 'png', "zmin" : 0, "zmax" : 20},
+			"WINTER" : {"urlKey" : 'winter-v2', "name" : 'Winter', "description" : 'Winter sports — ski slopes, lifts', "format" : 'png', "zmin" : 0, "zmax" : 20},
+			"DATAVIZ_LIGHT" : {"urlKey" : 'dataviz', "name" : 'Dataviz Light', "description" : 'Data visualisation basemap', "format" : 'png', "zmin" : 0, "zmax" : 20},
+			"DATAVIZ_DARK" : {"urlKey" : 'dataviz-dark', "name" : 'Dataviz Dark', "description" : 'Dark data visualisation basemap', "format" : 'png', "zmin" : 0, "zmax" : 20},
+			"OCEAN" : {"urlKey" : 'ocean', "name" : 'Ocean', "description" : 'Bathymetry and ocean features', "format" : 'png', "zmin" : 0, "zmax" : 20},
+			"BACKDROP" : {"urlKey" : 'backdrop', "name" : 'Backdrop', "description" : 'Minimal context with terrain — ideal for data overlays', "format" : 'png', "zmin" : 0, "zmax" : 20},
+			"AQUARELLE" : {"urlKey" : 'aquarelle', "name" : 'Aquarelle', "description" : 'Artistic hand-drawn watercolor aesthetic', "format" : 'png', "zmin" : 0, "zmax" : 20}
+		},
+		"urlTemplate": "https://api.maptiler.com/maps/{LAY}/256/{Z}/{X}/{Y}.png?key={MAPTILER_KEY}",
+		"referer": "https://www.maptiler.com"
+	},
+
+
+	"THUNDERFOREST" : {
+		"name" : 'Thunderforest',
+		"description" : 'Thunderforest — free hobby plan (registration required)',
+		"service": 'TMS',
+		"grid": 'WM',
+		"quadTree": False,
+		"layers" : {
+			"OPENCYCLEMAP" : {"urlKey" : 'cycle', "name" : 'OpenCycleMap', "description" : 'Cycling-focused map with routes', "format" : 'png', "zmin" : 0, "zmax" : 22},
+			"TRANSPORT" : {"urlKey" : 'transport', "name" : 'Transport', "description" : 'Public transport map', "format" : 'png', "zmin" : 0, "zmax" : 22},
+			"TRANSPORT_DARK" : {"urlKey" : 'transport-dark', "name" : 'Transport Dark', "description" : 'Dark public transport map', "format" : 'png', "zmin" : 0, "zmax" : 22},
+			"LANDSCAPE" : {"urlKey" : 'landscape', "name" : 'Landscape', "description" : 'Natural world features and terrain', "format" : 'png', "zmin" : 0, "zmax" : 22},
+			"OUTDOORS" : {"urlKey" : 'outdoors', "name" : 'Outdoors', "description" : 'Hiking and outdoor activities', "format" : 'png', "zmin" : 0, "zmax" : 22},
+			"ATLAS" : {"urlKey" : 'atlas', "name" : 'Atlas', "description" : 'Clear map for navigation and context', "format" : 'png', "zmin" : 0, "zmax" : 22},
+			"PIONEER" : {"urlKey" : 'pioneer', "name" : 'Pioneer', "description" : 'Modern railways in vintage style', "format" : 'png', "zmin" : 0, "zmax" : 22},
+			"MOBILE_ATLAS" : {"urlKey" : 'mobile-atlas', "name" : 'Mobile Atlas', "description" : 'High-contrast for difficult lighting', "format" : 'png', "zmin" : 0, "zmax" : 22},
+			"NEIGHBOURHOOD" : {"urlKey" : 'neighbourhood', "name" : 'Neighbourhood', "description" : 'Clean neighbourhood-focused map', "format" : 'png', "zmin" : 0, "zmax" : 22},
+			"SPINAL_MAP" : {"urlKey" : 'spinal-map', "name" : 'Spinal Map', "description" : 'This map goes up to 11', "format" : 'png', "zmin" : 0, "zmax" : 22}
+		},
+		"urlTemplate": "https://tile.thunderforest.com/{LAY}/{Z}/{X}/{Y}.png?apikey={THUNDERFOREST_KEY}",
+		"referer": "https://www.thunderforest.com"
+	},
+
+
+	"STADIA" : {
+		"name" : 'Stadia Maps',
+		"description" : 'Stadia Maps — free tier 200k credits/month (registration required)',
+		"service": 'TMS',
+		"grid": 'WM',
+		"quadTree": False,
+		"layers" : {
+			"SMOOTH" : {"urlKey" : 'alidade_smooth', "name" : 'Alidade Smooth', "description" : 'Light basemap for overlays', "format" : 'png', "zmin" : 0, "zmax" : 20},
+			"SMOOTH_DARK" : {"urlKey" : 'alidade_smooth_dark', "name" : 'Alidade Smooth Dark', "description" : 'Dark basemap', "format" : 'png', "zmin" : 0, "zmax" : 20},
+			"SATELLITE" : {"urlKey" : 'alidade_satellite', "name" : 'Satellite', "description" : 'Satellite imagery with labels (Standard plan required)', "format" : 'jpg', "zmin" : 0, "zmax" : 20},
+			"OUTDOORS" : {"urlKey" : 'outdoors', "name" : 'Outdoors', "description" : 'Outdoor features — trails, ski slopes, parks', "format" : 'png', "zmin" : 0, "zmax" : 20},
+			"OSM_BRIGHT" : {"urlKey" : 'osm_bright', "name" : 'OSM Bright', "description" : 'Clean OSM basemap', "format" : 'png', "zmin" : 0, "zmax" : 20},
+			"TONER" : {"urlKey" : 'stamen_toner', "name" : 'Stamen Toner', "description" : 'High-contrast black and white', "format" : 'png', "zmin" : 0, "zmax" : 18},
+			"TONER_LITE" : {"urlKey" : 'stamen_toner_lite', "name" : 'Stamen Toner Lite', "description" : 'Lighter B+W variant', "format" : 'png', "zmin" : 0, "zmax" : 18},
+			"TONER_BG" : {"urlKey" : 'stamen_toner_background', "name" : 'Stamen Toner Background', "description" : 'Only water, landcover and lines — no labels', "format" : 'png', "zmin" : 0, "zmax" : 18},
+			"TONER_LINES" : {"urlKey" : 'stamen_toner_lines', "name" : 'Stamen Toner Lines', "description" : 'Only roads and borders', "format" : 'png', "zmin" : 0, "zmax" : 18},
+			"TONER_LABELS" : {"urlKey" : 'stamen_toner_labels', "name" : 'Stamen Toner Labels', "description" : 'Only labels overlay', "format" : 'png', "zmin" : 0, "zmax" : 18},
+			"TERRAIN" : {"urlKey" : 'stamen_terrain', "name" : 'Stamen Terrain', "description" : 'Hill shading and natural vegetation', "format" : 'png', "zmin" : 0, "zmax" : 18},
+			"TERRAIN_BG" : {"urlKey" : 'stamen_terrain_background', "name" : 'Stamen Terrain Background', "description" : 'Only terrain and landcover — no labels', "format" : 'png', "zmin" : 0, "zmax" : 18},
+			"TERRAIN_LINES" : {"urlKey" : 'stamen_terrain_lines', "name" : 'Stamen Terrain Lines', "description" : 'Only roads and borders', "format" : 'png', "zmin" : 0, "zmax" : 18},
+			"TERRAIN_LABELS" : {"urlKey" : 'stamen_terrain_labels', "name" : 'Stamen Terrain Labels', "description" : 'Only labels overlay', "format" : 'png', "zmin" : 0, "zmax" : 18},
+			"WATERCOLOR" : {"urlKey" : 'stamen_watercolor', "name" : 'Stamen Watercolor', "description" : 'Hand-drawn watercolor style', "format" : 'jpg', "zmin" : 0, "zmax" : 16}
+		},
+		"urlTemplate": "https://tiles.stadiamaps.com/tiles/{LAY}/{Z}/{X}/{Y}.png?api_key={STADIA_API_KEY}",
+		"referer": "https://stadiamaps.com"
+	},
+
+
 	"OPENTOPOMAP" : {
 		"name" : 'OpenTopoMap',
 		"description" : 'Topographic map with contour lines — CC BY-SA 3.0',
