@@ -123,6 +123,7 @@ class OBJECT_OT_drop_to_ground(Operator):
                 msg = "Object {} is of type {} works only with Use Center option " \
                           "checked".format(ob.name, ob.type)
                 log.info(msg)
+                continue
 
             x, y = minLoc.x, minLoc.y
             hit = rayCaster.rayCast(x, y)

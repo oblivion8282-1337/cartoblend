@@ -66,86 +66,65 @@ def replace_nans(array, max_iter, tolerance, kernel_size=1, method='localmean'):
 	a copy of the input array, where NaN elements have been replaced.
 	"""
 
-	filled = np.empty( [array.shape[0], array.shape[1]], dtype=DTYPEf)
-	kernel = np.empty( (2*kernel_size+1, 2*kernel_size+1), dtype=DTYPEf )
-
-	# indices where array is NaN
-	inans, jnans = np.nonzero( np.isnan(array) )
-
-	# number of NaN elements
-	n_nans = len(inans)
-
-	# arrays which contain replaced values to check for convergence
-	replaced_new = np.zeros( n_nans, dtype=DTYPEf)
-	replaced_old = np.zeros( n_nans, dtype=DTYPEf)
-
-	# depending on kernel type, fill kernel array
+	# Build kernel
 	if method == 'localmean':
-		# weight are equal to 1/( (2*kernel_size+1)**2 -1 )
-		for i in range(2*kernel_size+1):
-			for j in range(2*kernel_size+1):
-				kernel[i,j] = 1
-		#print(kernel, 'kernel')
+		kernel = np.ones((2*kernel_size+1, 2*kernel_size+1), dtype=DTYPEf)
 	elif method == 'idw':
-		kernel = np.array([[0, 0.5, 0.5, 0.5,0],
-				  [0.5,0.75,0.75,0.75,0.5],
-				  [0.5,0.75,1,0.75,0.5],
-				  [0.5,0.75,0.75,0.5,1],
-				  [0, 0.5, 0.5 ,0.5 ,0]])
-		#print(kernel, 'kernel')
+		kernel = np.array([[0, 0.5, 0.5, 0.5, 0],
+				  [0.5, 0.75, 0.75, 0.75, 0.5],
+				  [0.5, 0.75, 1, 0.75, 0.5],
+				  [0.5, 0.75, 0.75, 0.5, 1],
+				  [0, 0.5, 0.5, 0.5, 0]], dtype=DTYPEf)
 	else:
 		raise ValueError("method not valid. Should be one of 'localmean', 'idw'.")
 
-	# fill new array with input elements
-	for i in range(array.shape[0]):
-		for j in range(array.shape[1]):
-			filled[i,j] = array[i,j]
+	filled = array.astype(DTYPEf, copy=True)
+	nan_mask_initial = np.isnan(filled)
+	H, W = filled.shape
+	ks = kernel_size
 
-	# make several passes
-	# until we reach convergence
+	# Iterate Jacobi-style: each pass uses the previous pass's snapshot to avoid
+	# read-during-update artefacts. Information diffuses across NaN regions one
+	# kernel-radius per iteration.
+	prev_replaced = np.zeros_like(filled)
 	for it in range(max_iter):
-		#print('Fill NaN iteration', it)
-		# for each NaN element
-		for k in range(n_nans):
-			i = inans[k]
-			j = jnans[k]
+		valid = ~np.isnan(filled)
+		vals = np.where(valid, filled, 0.0)
 
-			# initialize to zero
-			filled[i,j] = 0.0
-			n = 0
+		weighted_sum = np.zeros_like(filled)
+		weight_sum = np.zeros_like(filled)
 
-			# loop over the kernel
-			for I in range(2*kernel_size+1):
-				for J in range(2*kernel_size+1):
+		for I in range(2*ks+1):
+			for J in range(2*ks+1):
+				# Skip kernel center (the cell being filled).
+				if I - ks == 0 and J - ks == 0:
+					continue
+				w = kernel[I, J]
+				if w == 0:
+					continue
+				di = I - ks
+				dj = J - ks
+				# Slices that read from (i+di, j+dj) into (i, j) with bounds-clipping.
+				src_i = slice(max(0, di), H + min(0, di))
+				src_j = slice(max(0, dj), W + min(0, dj))
+				dst_i = slice(max(0, -di), H + min(0, -di))
+				dst_j = slice(max(0, -dj), W + min(0, -dj))
+				weighted_sum[dst_i, dst_j] += w * vals[src_i, src_j]
+				weight_sum[dst_i, dst_j] += w * valid[src_i, src_j]
 
-					# if we are not out of the boundaries
-					if i+I-kernel_size < array.shape[0] and i+I-kernel_size >= 0:
-						if j+J-kernel_size < array.shape[1] and j+J-kernel_size >= 0:
+		with np.errstate(invalid='ignore', divide='ignore'):
+			new_vals = weighted_sum / weight_sum
 
-							# if the neighbour element is not NaN itself.
-							if filled[i+I-kernel_size, j+J-kernel_size] == filled[i+I-kernel_size, j+J-kernel_size] :
+		update_mask = nan_mask_initial & (weight_sum > 0)
+		# Cells that have no valid neighbour stay NaN (may be reached next iter).
+		filled = np.where(update_mask, new_vals, np.where(nan_mask_initial, np.nan, filled))
 
-								# do not sum itself
-								if I-kernel_size != 0 and J-kernel_size != 0:
-
-									# convolve kernel with original array
-									filled[i,j] = filled[i,j] + filled[i+I-kernel_size, j+J-kernel_size]*kernel[I, J]
-									n = n + 1*kernel[I,J]
-			# divide value by effective number of added elements
-			if n != 0:
-				filled[i,j] = filled[i,j] / n
-				replaced_new[k] = filled[i,j]
-			else:
-				filled[i,j] = np.nan
-
-		# check if mean square difference between values of replaced
-		# elements is below a certain tolerance
-		#print('tolerance', np.mean( (replaced_new-replaced_old)**2 ))
-		if np.mean( (replaced_new-replaced_old)**2 ) < tolerance:
-			break
-		else:
-			for l in range(n_nans):
-				replaced_old[l] = replaced_new[l]
+		# Convergence: MSE between this and previous pass over replaced cells.
+		if it > 0:
+			diff = filled[update_mask] - prev_replaced[update_mask]
+			if diff.size and np.nanmean(diff * diff) < tolerance:
+				break
+		prev_replaced = filled.copy()
 
 	return filled
 

@@ -2,6 +2,7 @@
 import logging
 log = logging.getLogger(__name__)
 import os
+import re
 import colorsys
 from xml.dom.minidom import parse, parseString
 from xml.etree import ElementTree as etree
@@ -238,6 +239,8 @@ class Gradient():
 	def __readSVG(self, svg):
 		try:
 			# Block billion-laughs / entity-expansion DoS by refusing files with a DTD.
+			# Strip XML comments first so a comment containing "<!DOCTYPE" doesn't
+			# trip the guard.
 			if hasattr(svg, 'read'):
 				head = svg.read(8192)
 				try:
@@ -247,8 +250,12 @@ class Gradient():
 			else:
 				with open(svg, 'rb') as fh:
 					head = fh.read(8192)
-			lowered = head.lower() if isinstance(head, bytes) else head.encode('utf-8', 'ignore').lower()
-			if b'<!doctype' in lowered or b'<!entity' in lowered:
+			head_bytes = head if isinstance(head, bytes) else head.encode('utf-8', 'ignore')
+			# Remove XML comments before scanning. Multi-line comments may be split
+			# across the 8192-byte window; a remaining open '<!--' without a close
+			# is harmless to ignore for the keyword check.
+			scan = re.sub(rb'<!--.*?-->', b'', head_bytes, flags=re.DOTALL).lower()
+			if b'<!doctype' in scan or b'<!entity' in scan:
 				log.error("SVG contains a DOCTYPE/ENTITY declaration; refused for safety")
 				return False
 			domData = parse(svg)

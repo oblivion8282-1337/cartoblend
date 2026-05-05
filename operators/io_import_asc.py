@@ -98,7 +98,7 @@ class IMPORTGIS_OT_ascii_grid(Operator, ImportHelper):
         Count newlines in file.
         512MB file ~3 seconds.
         """
-        with open(filename) as f:
+        with open(filename, encoding='utf-8') as f:
             lines = 0
             for _ in f:
                 lines += 1
@@ -185,7 +185,7 @@ class IMPORTGIS_OT_ascii_grid(Operator, ImportHelper):
         name = os.path.splitext(os.path.basename(filename))[0]
         log.info('Importing {}...'.format(filename))
 
-        with open(filename, 'r') as f:
+        with open(filename, 'r', encoding='utf-8') as f:
             meta_re = re.compile(r'^([^\s]+)\s+([^\s]+)$')  # 'abc  123'
             meta = {}
             for i in range(6):

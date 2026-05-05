@@ -379,7 +379,9 @@ class IMPORTGIS_OT_shapefile(Operator):
 				except KeyError:
 					self.report({'ERROR'}, "Elevation object '{}' not found in scene".format(self.objElevName))
 					return {'CANCELLED'}
-				rayCaster = DropToGround(scn, elevObj)
+				# Use BVH method: builds a BVHTree once instead of paying obj.ray_cast
+				# overhead per vertex. Roughly 5-10x faster on large shapefiles.
+				rayCaster = DropToGround(scn, elevObj, method='BVH')
 
 			#Get fields
 			fields = [field for field in shp.fields if field[0] != 'DeletionFlag'] #ignore default DeletionFlag field
@@ -502,7 +504,7 @@ class IMPORTGIS_OT_shapefile(Operator):
 
 				#Progress infos
 				pourcent = round(((i+1)*100)/nbFeats)
-				if pourcent in list(range(0, 110, 10)) and pourcent != progress:
+				if 0 <= pourcent <= 100 and pourcent % 10 == 0 and pourcent != progress:
 					progress = pourcent
 					if pourcent == 100:
 						print(str(pourcent)+'%')

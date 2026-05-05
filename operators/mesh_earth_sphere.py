@@ -4,6 +4,7 @@ from bpy.props import IntProperty
 
 from math import cos, sin, radians, sqrt
 from mathutils import Vector
+import numpy as np
 
 import logging
 log = logging.getLogger(__name__)
@@ -47,11 +48,28 @@ class OBJECT_OT_earth_sphere(Operator):
 				continue
 
 			mesh = obj.data
-			m = obj.matrix_world
-			for vertex in mesh.vertices:
-				co = m @ vertex.co
-				lon, lat = co.x, co.y
-				vertex.co = m.inverted() @ lonlat2xyz(self.radius, lon, lat)
+			m = np.array(obj.matrix_world)
+			mi = np.array(obj.matrix_world.inverted())
+			n = len(mesh.vertices)
+			# Pull all local coords as a flat numpy buffer.
+			coords = np.empty(n * 3, dtype=np.float32)
+			mesh.vertices.foreach_get('co', coords)
+			coords = coords.reshape(n, 3)
+			# Build homogeneous coords and transform to world space.
+			ones = np.ones((n, 1), dtype=np.float32)
+			homog = np.concatenate([coords, ones], axis=1)
+			world = homog @ m.T
+			lon = np.radians(world[:, 0])
+			lat = np.radians(world[:, 1])
+			cos_lat = np.cos(lat)
+			x = self.radius * cos_lat * np.cos(lon)
+			y = self.radius * cos_lat * np.sin(lon)
+			z = self.radius * np.sin(lat)
+			# Back to local space.
+			world_new = np.stack([x, y, z, np.ones(n, dtype=x.dtype)], axis=1)
+			local_new = (world_new @ mi.T)[:, :3]
+			mesh.vertices.foreach_set('co', local_new.astype(np.float32).ravel())
+			mesh.update()
 
 		return {'FINISHED'}
 
@@ -82,10 +100,16 @@ class OBJECT_OT_earth_curvature(Operator):
 
 		mesh = obj.data
 		viewpt = scn.cursor.location
-
-		for vertex in mesh.vertices:
-			d = (viewpt.xy - vertex.co.xy).length
-			vertex.co.z = vertex.co.z - getZDelta(d)
+		n = len(mesh.vertices)
+		coords = np.empty(n * 3, dtype=np.float32)
+		mesh.vertices.foreach_get('co', coords)
+		coords = coords.reshape(n, 3)
+		dx = coords[:, 0] - viewpt.x
+		dy = coords[:, 1] - viewpt.y
+		d = np.sqrt(dx * dx + dy * dy)
+		coords[:, 2] = coords[:, 2] - (np.sqrt(EARTH_RADIUS * EARTH_RADIUS + d * d) - EARTH_RADIUS)
+		mesh.vertices.foreach_set('co', coords.ravel())
+		mesh.update()
 
 		return {'FINISHED'}
 

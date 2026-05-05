@@ -139,11 +139,14 @@ class EXPORTGIS_OT_shapefile(Operator, ExportHelper):
 			dLen = 5 #numeric fields default decimal precision
 			maxFieldNameLen = 8 #shp capabilities limit field name length to 8 characters
 			outShp.field('objId','N', nLen) #export id
+			# Track declared field names in a set so the per-property check below
+			# is O(1) instead of O(N_fields) per property per object.
+			knownFields = {f[0] for f in outShp.fields}
 			for obj in objects:
 				for k, v in obj.items():
 					k = k[0:maxFieldNameLen]
 					#evaluate the field type with the first value
-					if k not in [f[0] for f in outShp.fields]:
+					if k not in knownFields:
 						if isinstance(v, float) or isinstance(v, int):
 							fieldType = 'N'
 						elif isinstance(v, str):
@@ -167,8 +170,13 @@ class EXPORTGIS_OT_shapefile(Operator, ExportHelper):
 								outShp.field(k, fieldType, nLen, 0)
 							else:
 								outShp.field(k, fieldType, nLen, dLen)
+						knownFields.add(k)
 
 
+			# Snapshot field type lookups once; outShp.fields no longer changes
+			# after the schema-build loop above. Avoids quadratic re-scans below.
+			fieldTypes = {f[0]: f[1] for f in outShp.fields}
+			fieldNames = list(fieldTypes.keys())
 			for i, obj in enumerate(objects):
 
 				loc = obj.location
@@ -242,9 +250,9 @@ class EXPORTGIS_OT_shapefile(Operator, ExportHelper):
 				attributes = {'objId':i}
 				for k, v in obj.items():
 					k = k[0:maxFieldNameLen]
-					if not any([f[0] == k for f in outShp.fields]):
+					fType = fieldTypes.get(k)
+					if fType is None:
 						continue
-					fType = next( (f[1] for f in outShp.fields if f[0] == k) )
 					if fType in ('N', 'F'):
 						try:
 							v = float(v)
@@ -253,7 +261,9 @@ class EXPORTGIS_OT_shapefile(Operator, ExportHelper):
 							v = None
 					attributes[k] = v
 				#assign None to orphans shp fields (if the key does not exists in the custom props of this object)
-				attributes.update({f[0]:None for f in outShp.fields if f[0] not in attributes.keys()})
+				for fn in fieldNames:
+					if fn not in attributes:
+						attributes[fn] = None
 				#Write
 				for n in range(nFeat):
 					outShp.record(**attributes)
