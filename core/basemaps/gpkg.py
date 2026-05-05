@@ -40,7 +40,8 @@ class GeoPackage():
 	MAX_DAYS = 90  # default, overridden by addon preferences if available
 
 	@staticmethod
-	def _get_max_days():
+	def _read_max_days_from_prefs():
+		"""Read cache expiry from addon prefs. MUST be called from the main thread."""
 		try:
 			import bpy
 			prefs = bpy.context.preferences.addons['bl_ext.user_default.cartoblend'].preferences
@@ -49,9 +50,17 @@ class GeoPackage():
 			log.debug('cacheExpiry pref unavailable, using default', exc_info=True)
 			return GeoPackage.MAX_DAYS
 
-	def __init__(self, path, tm):
+	def _get_max_days(self):
+		# Cached snapshot taken at __init__ time (main thread). Worker threads
+		# must never touch bpy.context, so we read this attribute instead.
+		return self._max_days
+
+	def __init__(self, path, tm, max_days=None):
 		self.dbPath = path
 		self.name = os.path.splitext(os.path.basename(path))[0]
+		# Snapshot the expiry policy now while we are still on the main thread.
+		# Workers later call self._get_max_days() against this cached value.
+		self._max_days = max_days if max_days is not None else GeoPackage._read_max_days_from_prefs()
 
 		# Thread-local storage for per-thread SQLite connections
 		self._local = threading.local()
@@ -74,6 +83,18 @@ class GeoPackage():
 			#self.insertCRS(4326, "WGS84")
 
 			self.insertTileMatrixSet()
+		else:
+			# Migration: pre-existing caches lack the (zoom_level, last_modified)
+			# index used by listExistingTiles. Add it lazily.
+			try:
+				db = self._get_connection()
+				db.execute("""
+					CREATE INDEX IF NOT EXISTS idx_tiles_z_modified
+					ON gpkg_tiles (zoom_level, last_modified);
+				""")
+				db.commit()
+			except Exception:
+				log.debug('Could not ensure last_modified index on existing GPKG', exc_info=True)
 
 
 	def _get_connection(self, detect_types=0):
@@ -210,13 +231,20 @@ class GeoPackage():
 				tile_column INTEGER NOT NULL,
 				tile_row INTEGER NOT NULL,
 				tile_data BLOB NOT NULL,
-				last_modified TIMESTAMP DEFAULT (datetime('now','localtime')),
+				last_modified TIMESTAMP DEFAULT (datetime('now')),
 				UNIQUE (zoom_level, tile_column, tile_row));
 		""")
 
 		cursor.execute("""
 			CREATE INDEX IF NOT EXISTS idx_tiles_zxy
 			ON gpkg_tiles (zoom_level, tile_column, tile_row);
+		""")
+
+		# Speeds up cache-expiry scans (julianday(last_modified) filter in
+		# listExistingTiles / getTiles) on large caches.
+		cursor.execute("""
+			CREATE INDEX IF NOT EXISTS idx_tiles_z_modified
+			ON gpkg_tiles (zoom_level, last_modified);
 		""")
 
 		db.commit()
@@ -290,7 +318,9 @@ class GeoPackage():
 		if result is None:
 			return None
 		try:
-			timeDelta = datetime.datetime.now() - result[1]
+			# DB stores UTC ('datetime("now")'), so compare against utcnow() to
+			# avoid timezone drift in the cache-expiry calculation.
+			timeDelta = datetime.datetime.utcnow() - result[1]
 			if timeDelta.days > self._get_max_days():
 				return None
 		except (TypeError, AttributeError):

@@ -13,6 +13,7 @@ from .core.proj.reproj import MapTilerCoordinates
 from .core.proj.srs import SRS
 from .core.checkdeps import HAS_GDAL, HAS_PYPROJ, HAS_PIL, HAS_IMGIO
 from .core.basemaps import providers as providers_mod
+from .core.basemaps.providers import is_safe_url
 from .core import settings
 
 PKG = __package__
@@ -73,11 +74,50 @@ def _save_credentials(data):
 		log.error('Failed to save credentials file', exc_info=True)
 
 def _sync_credential(prop_name, value):
-	"""Update a single key in the credentials file."""
+	"""Update a single key in the credentials file (synchronous variant)."""
 	data = _load_credentials()
 	if data.get(prop_name) != value:
 		data[prop_name] = value
 		_save_credentials(data)
+
+
+# Debounced writer: every keystroke in the prefs UI triggers an update_callback,
+# which would otherwise rewrite credentials.json on each character. Coalesce
+# changes via a Blender app timer so we hit disk at most once per ~0.4 s.
+_PENDING_CREDENTIALS = {}
+_PENDING_TIMER_REGISTERED = False
+_DEBOUNCE_INTERVAL = 0.4
+
+
+def _flush_pending_credentials():
+	global _PENDING_TIMER_REGISTERED
+	_PENDING_TIMER_REGISTERED = False
+	if not _PENDING_CREDENTIALS:
+		return None
+	data = _load_credentials()
+	dirty = False
+	for k, v in list(_PENDING_CREDENTIALS.items()):
+		if data.get(k) != v:
+			data[k] = v
+			dirty = True
+	_PENDING_CREDENTIALS.clear()
+	if dirty:
+		_save_credentials(data)
+	return None  # one-shot
+
+
+def _schedule_credential_sync(prop_name, value):
+	global _PENDING_TIMER_REGISTERED
+	_PENDING_CREDENTIALS[prop_name] = value
+	if not _PENDING_TIMER_REGISTERED:
+		_PENDING_TIMER_REGISTERED = True
+		try:
+			bpy.app.timers.register(_flush_pending_credentials, first_interval=_DEBOUNCE_INTERVAL)
+		except Exception:
+			# If the timer can't be scheduled (e.g. background mode), fall back
+			# to a synchronous write so the credential is still persisted.
+			_PENDING_TIMER_REGISTERED = False
+			_flush_pending_credentials()
 
 def restore_credentials(prefs):
 	"""Restore credentials from file into addon preferences (called on register)."""
@@ -411,7 +451,7 @@ class BGIS_PREFS(AddonPreferences):
 		)
 
 	def updateOpentopoKey(self, context):
-		_sync_credential('opentopography_api_key', self.opentopography_api_key)
+		_schedule_credential_sync('opentopography_api_key', self.opentopography_api_key)
 
 	opentopography_api_key: StringProperty(
 		name = "",
@@ -422,7 +462,7 @@ class BGIS_PREFS(AddonPreferences):
 
 	def updateMapTilerApiKey(self, context):
 		settings.maptiler_api_key = self.maptiler_api_key
-		_sync_credential('maptiler_api_key', self.maptiler_api_key)
+		_schedule_credential_sync('maptiler_api_key', self.maptiler_api_key)
 
 	maptiler_api_key: StringProperty(
 		name = "",
@@ -433,7 +473,7 @@ class BGIS_PREFS(AddonPreferences):
 
 	def updateMapboxToken(self, context):
 		settings.mapbox_token = self.mapbox_token
-		_sync_credential('mapbox_token', self.mapbox_token)
+		_schedule_credential_sync('mapbox_token', self.mapbox_token)
 
 	mapbox_token: StringProperty(
 		name = "",
@@ -444,7 +484,7 @@ class BGIS_PREFS(AddonPreferences):
 
 	def updateThunderforestApiKey(self, context):
 		settings.thunderforest_api_key = self.thunderforest_api_key
-		_sync_credential('thunderforest_api_key', self.thunderforest_api_key)
+		_schedule_credential_sync('thunderforest_api_key', self.thunderforest_api_key)
 
 	thunderforest_api_key: StringProperty(
 		name = "",
@@ -455,7 +495,7 @@ class BGIS_PREFS(AddonPreferences):
 
 	def updateStadiaApiKey(self, context):
 		settings.stadia_api_key = self.stadia_api_key
-		_sync_credential('stadia_api_key', self.stadia_api_key)
+		_schedule_credential_sync('stadia_api_key', self.stadia_api_key)
 
 	stadia_api_key: StringProperty(
 		name = "",
@@ -465,7 +505,7 @@ class BGIS_PREFS(AddonPreferences):
 	)
 
 	def updateCdseClientId(self, context):
-		_sync_credential('cdse_client_id', self.cdse_client_id)
+		_schedule_credential_sync('cdse_client_id', self.cdse_client_id)
 
 	cdse_client_id: StringProperty(
 		name = "",
@@ -475,7 +515,7 @@ class BGIS_PREFS(AddonPreferences):
 	)
 
 	def updateCdseClientSecret(self, context):
-		_sync_credential('cdse_client_secret', self.cdse_client_secret)
+		_schedule_credential_sync('cdse_client_secret', self.cdse_client_secret)
 
 	cdse_client_secret: StringProperty(
 		name = "",
@@ -950,6 +990,9 @@ class BGIS_OT_add_dem_server(Operator):
 		return context.window_manager.invoke_props_dialog(self)#, width=300)
 
 	def execute(self, context):
+		if not is_safe_url(self.url):
+			self.report({'ERROR'}, 'URL must start with http:// or https://')
+			return {'CANCELLED'}
 		templates = ['{W}', '{E}', '{S}', '{N}']
 		if all([t in self.url for t in templates]):
 			prefs = context.preferences.addons[PKG].preferences
@@ -1020,6 +1063,9 @@ class BGIS_OT_edit_dem_server(Operator):
 		return context.window_manager.invoke_props_dialog(self)
 
 	def execute(self, context):
+		if not is_safe_url(self.url):
+			self.report({'ERROR'}, 'URL must start with http:// or https://')
+			return {'CANCELLED'}
 		prefs = context.preferences.addons[PKG].preferences
 		key = prefs.demServer
 		data = json.loads(prefs.demServerJson)
@@ -1090,11 +1136,13 @@ class BGIS_OT_add_overpass_server(Operator):
 		return context.window_manager.invoke_props_dialog(self)#, width=300)
 
 	def execute(self, context):
+		if not is_safe_url(self.url):
+			self.report({'ERROR'}, 'URL must start with http:// or https://')
+			return {'CANCELLED'}
 		prefs = context.preferences.addons[PKG].preferences
 		data = json.loads(prefs.overpassServerJson)
 		data.append( (self.url, self.name, self.desc) )
 		prefs.overpassServerJson = json.dumps(data)
-		#EditEnum('overpassServer').append(self.url, self.name, self.desc, check=lambda url: url.startswith('http'))
 		if context.area:
 			context.area.tag_redraw()
 		return {'FINISHED'}
@@ -1157,6 +1205,9 @@ class BGIS_OT_edit_overpass_server(Operator):
 		return context.window_manager.invoke_props_dialog(self)
 
 	def execute(self, context):
+		if not is_safe_url(self.url):
+			self.report({'ERROR'}, 'URL must start with http:// or https://')
+			return {'CANCELLED'}
 		prefs = context.preferences.addons[PKG].preferences
 		key = prefs.overpassServer
 		data = json.loads(prefs.overpassServerJson)

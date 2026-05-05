@@ -49,7 +49,7 @@ class Settings():
 	@proj_engine.setter
 	def proj_engine(self, engine):
 		if engine not in getAvailableProjEngines():
-			raise OSError
+			raise ValueError('Unknown proj_engine: {!r}'.format(engine))
 		else:
 			self._proj_engine = engine
 
@@ -60,7 +60,7 @@ class Settings():
 	@img_engine.setter
 	def img_engine(self, engine):
 		if engine not in getAvailableImgEngines():
-			raise OSError
+			raise ValueError('Unknown img_engine: {!r}'.format(engine))
 		else:
 			self._img_engine = engine
 

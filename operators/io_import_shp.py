@@ -12,6 +12,28 @@ log = logging.getLogger(__name__)
 
 from ..core.lib.shapefile import Reader as shpReader
 
+
+def _read_cpg_encoding(shp_path):
+	"""Return the encoding declared in a sidecar .cpg file, or None.
+
+	Shapefiles bundle their DBF-encoding declaration in an ESRI .cpg file
+	containing a single token (e.g. 'UTF-8', 'cp1252', 'ISO-8859-1', '936').
+	Numeric values are interpreted as Windows code pages.
+	"""
+	cpg = os.path.splitext(shp_path)[0] + '.cpg'
+	if not os.path.exists(cpg):
+		return None
+	try:
+		with open(cpg, 'r', encoding='ascii', errors='ignore') as f:
+			tok = f.read().strip()
+	except OSError:
+		return None
+	if not tok:
+		return None
+	if tok.isdigit():
+		return 'cp' + tok
+	return tok
+
 from ..geoscene import GeoScene, georefManagerLayout
 from ..prefs import PredefCRS
 from ..core import BBOX
@@ -107,7 +129,8 @@ class IMPORTGIS_OT_shapefile_props_dialog(Operator):
 	def listFields(self, context):
 		fieldsItems = []
 		try:
-			shp = shpReader(self.filepath)
+			enc = _read_cpg_encoding(self.filepath)
+			shp = shpReader(self.filepath, encoding=enc) if enc else shpReader(self.filepath)
 		except Exception as e:
 			log.warning("Unable to read shapefile fields", exc_info=True)
 			return fieldsItems
@@ -353,10 +376,15 @@ class IMPORTGIS_OT_shapefile(Operator):
 			#Path
 			shpName = os.path.basename(self.filepath)[:-4]
 
-			#Get shp reader
+			#Get shp reader (honour .cpg sidecar encoding for the DBF, if present)
 			log.info("Read shapefile...")
 			try:
-				shp = shpReader(self.filepath)
+				cpg_enc = _read_cpg_encoding(self.filepath)
+				if cpg_enc:
+					log.info("Using DBF encoding from .cpg sidecar: %s", cpg_enc)
+					shp = shpReader(self.filepath, encoding=cpg_enc)
+				else:
+					shp = shpReader(self.filepath)
 			except Exception as e:
 				log.error("Unable to read shapefile", exc_info=True)
 				self.report({'ERROR'}, "Unable to read shapefile, check logs")
@@ -494,7 +522,7 @@ class IMPORTGIS_OT_shapefile(Operator):
 				created_objects = [] #collect objects for deferred selection
 
 			#Main iteration over features
-			for i, feat in enumerate(shpIter):
+			for featIdx, feat in enumerate(shpIter):
 
 				if self.useDbf:
 					shape = feat.shape
@@ -503,7 +531,7 @@ class IMPORTGIS_OT_shapefile(Operator):
 					shape = feat
 
 				#Progress infos
-				pourcent = round(((i+1)*100)/nbFeats)
+				pourcent = round(((featIdx+1)*100)/nbFeats)
 				if 0 <= pourcent <= 100 and pourcent % 10 == 0 and pourcent != progress:
 					progress = pourcent
 					if pourcent == 100:
@@ -521,7 +549,7 @@ class IMPORTGIS_OT_shapefile(Operator):
 					try: #prevent "_shape object has no attribute parts" error
 						partsIdx = shape.parts
 					except Exception as e:
-						log.warning('Cannot access "parts" attribute for feature {} : {}'.format(i, e))
+						log.warning('Cannot access "parts" attribute for feature {} : {}'.format(featIdx, e))
 						partsIdx = [0]
 				nbParts = len(partsIdx)
 
@@ -533,16 +561,25 @@ class IMPORTGIS_OT_shapefile(Operator):
 				if nbPts == 0:
 					continue #go to next iteration of the loop
 
-				#Reproj geom
+				#Reproj geom — for Z shapes with GEOM elevation, project (x,y,z)
+				#together so vertical-datum changes are honoured.
+				zList = None
+				useGeomZ = (shpType[-1] == 'Z' and self.elevSource == 'GEOM')
 				if geoscn.crs != shpCRS:
-					pts = rprj.pts(pts)
+					if useGeomZ:
+						zList = list(shape.z)
+						reprojected = rprj.pts3D([(pt[0], pt[1], zList[k]) for k, pt in enumerate(pts)])
+						pts = [(p[0], p[1]) for p in reprojected]
+						zList = [p[2] for p in reprojected]
+					else:
+						pts = rprj.pts(pts)
 
 				#Get extrusion offset
 				if self.fieldExtrudeName:
 					try:
 						offset = float(record[extrudeFieldIdx])
 					except Exception as e:
-						log.warning('Cannot extract extrusion value for feature {} : {}'.format(i, e))
+						log.warning('Cannot extract extrusion value for feature {} : {}'.format(featIdx, e))
 						offset = 0 #null values will be set to zero
 
 				#Iter over parts
@@ -570,11 +607,12 @@ class IMPORTGIS_OT_shapefile(Operator):
 							try:
 								z = float(record[zFieldIdx])
 							except Exception as e:
-								log.warning('Cannot extract elevation value for feature {} : {}'.format(i, e))
+								log.warning('Cannot extract elevation value for feature {} : {}'.format(featIdx, e))
 								z = 0 #null values will be set to zero
 
 						elif shpType[-1] == 'Z' and self.elevSource == 'GEOM':
-							z = shape.z[idx1:idx2][k]
+							# Use reprojected Z if we did 3D reproj above; otherwise fall back to raw shape.z.
+							z = zList[idx1+k] if zList is not None else shape.z[idx1:idx2][k]
 
 						else:
 							z = 0
@@ -601,8 +639,8 @@ class IMPORTGIS_OT_shapefile(Operator):
 					if (shpType == 'PolyLine' or shpType == 'PolyLineZ'):
 						verts = [bm.verts.new(pt) for pt in geom]
 						edges = []
-						for i in range(len(geom)-1):
-							edge = bm.edges.new( [verts[i], verts[i+1] ])
+						for ev in range(len(geom)-1):
+							edge = bm.edges.new( [verts[ev], verts[ev+1] ])
 							edges.append(edge)
 						#Extrusion
 						if self.fieldExtrudeName and offset > 0:
@@ -651,7 +689,7 @@ class IMPORTGIS_OT_shapefile(Operator):
 						try:
 							name = record[nameFieldIdx]
 						except Exception as e:
-							log.warning('Cannot extract name value for feature {} : {}'.format(i, e))
+							log.warning('Cannot extract name value for feature {} : {}'.format(featIdx, e))
 							name = ''
 						# null values will return a bytes object containing a blank string of length equal to fields length definition
 						if isinstance(name, bytes):
@@ -688,16 +726,16 @@ class IMPORTGIS_OT_shapefile(Operator):
 					##bpy.ops.object.origin_set(type='ORIGIN_GEOMETRY')
 
 					#write attributes data
-					for i, field in enumerate(shp.fields):
+					for fi, field in enumerate(shp.fields):
 						fieldName, fieldType, fieldLength, fieldDecLength = field
 						if fieldName != 'DeletionFlag':
 							if fieldType in ('N', 'F'):
-								v = record[i-1]
+								v = record[fi-1]
 								if v is not None:
 									#cast to float to avoid overflow error when affecting custom property
-									obj[fieldName] = float(record[i-1])
+									obj[fieldName] = float(record[fi-1])
 							else:
-								obj[fieldName] = record[i-1]
+								obj[fieldName] = record[fi-1]
 
 				elif self.fieldExtrudeName:
 					#Join to final bmesh via direct bmesh copying (no temp mesh)

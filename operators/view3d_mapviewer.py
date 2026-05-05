@@ -130,11 +130,15 @@ class BaseMap(GeoScene):
 
 		self.synchOrj = prefs.synchOrj
 
-		#Get resampling algo preference and set the constant
-		MapService.RESAMP_ALG = prefs.resamplAlg
-
 		#Init MapService class
 		self.srv = MapService(srckey, cacheFolder)
+		# Apply prefs to this instance only (not the class) so multiple
+		# concurrent MapServices don't clobber each other.
+		alg = prefs.resamplAlg
+		if alg in MapService._RESAMP_ALG_VALID:
+			self.srv.resampAlg = alg
+		else:
+			log.warning('Unknown resampling algo %r in prefs, using default %r', alg, self.srv.resampAlg)
 		self.name = srckey + '_' + laykey + '_' + grdkey
 
 		#Set destination tile matrix
@@ -195,6 +199,13 @@ class BaseMap(GeoScene):
 		self._req_area_width = self.area.width
 		self._req_area_height = self.area.height
 		self._req_view_location = tuple(self.reg3d.view_location)
+		# crsx/crsy/scale/zoom live on the Scene as custom props; reading them
+		# from the worker thread would touch bpy data off the main thread.
+		# Snapshot them here so request() can use the cached values safely.
+		self._req_crsx = self.crsx
+		self._req_crsy = self.crsy
+		self._req_scale = self.scale
+		self._req_zoom = self.zoom
 		#Cache effective detail offset (scene property, not thread-safe)
 		try:
 			self._detail_offset = self.scn.gis_basemap.detail_offset
@@ -207,14 +218,17 @@ class BaseMap(GeoScene):
 	def stop(self):
 		'''Stop actual thread'''
 		if self.srv.running:
+			# Signal first; wait for the worker; only then close HTTP connections.
 			self.srv.stop()
 			if self.thread is not None:
 				self.thread.join()
+			self.srv.cleanup()
 
 	def run(self):
 		"""thread method"""
 		self.mosaic = self.request()
 		needsPlace = self.srv.running and self.mosaic is not None
+		# Only signal-stop here; the pool is closed in BaseMap.stop() after join.
 		self.srv.stop()
 		if needsPlace:
 			#Defer place() to main thread (bpy API is not thread-safe)
@@ -229,25 +243,31 @@ class BaseMap(GeoScene):
 		#Get area dimension (use cached values from get() for thread safety)
 		w, h = self._req_area_width, self._req_area_height
 
+		# Use the snapshot taken in get() so we never touch bpy.* off-thread.
+		zoom = self._req_zoom
+		scale = self._req_scale
+		crsx = self._req_crsx
+		crsy = self._req_crsy
+
 		#Compute effective tile zoom (navigation zoom + detail offset)
 		detail = getattr(self, '_detail_offset', 0)
-		tile_zoom = self.zoom + detail
+		tile_zoom = zoom + detail
 		tile_zoom = max(0, min(tile_zoom, self.tm.nbLevels - 1))
 		tile_zoom = max(self.layer.zmin, min(tile_zoom, self.layer.zmax))
 
 		#Get area bbox coords in destination tile matrix crs (map origin is bottom left)
 		#BBox is computed from navigation zoom (what the user sees)
-		z = self.zoom
+		z = zoom
 		res = self.tm.getRes(z)
 		if self.crs == 'EPSG:4326':
 			res = meters2dd(res)
 		dx, dy, dz = self._req_view_location
-		ox = self.crsx + (dx * self.scale)
-		oy = self.crsy + (dy * self.scale)
-		xmin = ox - w/2 * res * self.scale
-		ymax = oy + h/2 * res * self.scale
-		xmax = ox + w/2 * res * self.scale
-		ymin = oy - h/2 * res * self.scale
+		ox = crsx + (dx * scale)
+		oy = crsy + (dy * scale)
+		xmin = ox - w/2 * res * scale
+		ymax = oy + h/2 * res * scale
+		xmax = ox + w/2 * res * scale
+		ymin = oy - h/2 * res * scale
 		bbox = (xmin, ymin, xmax, ymax)
 		#reproj bbox to destination grid crs if scene crs is different
 		if self.crs != self.tm.CRS:
@@ -1087,8 +1107,24 @@ class VIEW3D_OT_map_viewer(Operator):
 
 
 	def __del__(self):
-		if getattr(self, 'restart', False):
-			bpy.ops.view3d.map_start('INVOKE_DEFAULT', src=self.srckey, lay=self.laykey, grd=self.grdkey, dialog=self.dialog, recenter=False)
+		# Intentionally a no-op. Restarting the modal operator from __del__
+		# is dangerous because Python's GC can run during Blender shutdown or
+		# addon reload, when bpy.ops or our own attributes may already be gone.
+		# A pending restart is scheduled via _schedule_restart() instead.
+		pass
+
+
+	def _schedule_restart(self):
+		"""Re-launch the modal viewer on the next idle tick. Safe to call
+		from inside modal/exit paths because it doesn't run bpy.ops directly."""
+		src, lay, grd, dialog = self.srckey, self.laykey, self.grdkey, self.dialog
+		def _fire():
+			try:
+				bpy.ops.view3d.map_start('INVOKE_DEFAULT', src=src, lay=lay, grd=grd, dialog=dialog, recenter=False)
+			except Exception:
+				log.debug('Deferred map_start failed', exc_info=True)
+			return None  # one-shot
+		bpy.app.timers.register(_fire, first_interval=0.0)
 
 
 	def invoke(self, context, event):
@@ -1326,15 +1362,18 @@ class VIEW3D_OT_map_viewer(Operator):
 			elif _source_change_pending:
 				_source_change_pending = False
 				self._cleanup_modal(context)
-				self.restart = True
+				self._schedule_restart()
 				return {'FINISHED'}
 			#Check if N-Panel "Export" button was clicked
 			elif _export_pending:
-				_export_pending = False
 				if not self.map.srv.running and self.map.mosaic is not None:
+					_export_pending = False
 					return self._do_export(context)
 				else:
-					self.progress = 'Tiles still loading, please wait…'
+					# Keep _export_pending set so the export fires automatically
+					# as soon as the tiles finish loading; the user shouldn't
+					# have to click Export again.
+					self.progress = 'Tiles still loading, exporting when ready…'
 			#Check if N-Panel detail offset was changed
 			elif _detail_changed_pending:
 				_detail_changed_pending = False
@@ -1623,21 +1662,21 @@ class VIEW3D_OT_map_viewer(Operator):
 		#SWITCH LAYER
 		if event.type == 'SPACE' and event.value == 'PRESS':
 			self._cleanup_modal(context)
-			self.restart = True
+			self._schedule_restart()
 			return {'FINISHED'}
 
 		#GO TO
 		if event.type == 'G' and event.value == 'PRESS':
 			self._cleanup_modal(context)
-			self.restart = True
 			self.dialog = 'SEARCH'
+			self._schedule_restart()
 			return {'FINISHED'}
 
 		#OPTIONS
 		if event.type == 'O' and event.value == 'PRESS':
 			self._cleanup_modal(context)
-			self.restart = True
 			self.dialog = 'OPTIONS'
+			self._schedule_restart()
 			return {'FINISHED'}
 
 		#ZOOM BOX

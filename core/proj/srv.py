@@ -26,6 +26,7 @@ import json
 
 from .. import settings
 from ..errors import ApiKeyError
+from ..utils.secrets import mask_url
 
 USER_AGENT = settings.user_agent
 
@@ -54,10 +55,10 @@ class MapTilerCoordinates():
 			rq = Request(url, headers={'User-Agent': USER_AGENT})
 			urlopen(rq, timeout=DEFAULT_TIMEOUT)
 		except URLError as e:
-			log.error('Cannot ping {} web service, {}'.format(url, e.reason))
+			log.error('Cannot ping {} web service, {}'.format(mask_url(url), e.reason))
 			raise e
 		except HTTPError as e:
-			log.error('Cannot ping {} web service, http error {}'.format(url, e.code))
+			log.error('Cannot ping {} web service, http error {}'.format(mask_url(url), e.code))
 			raise e
 		except Exception:
 			raise
@@ -67,13 +68,13 @@ class MapTilerCoordinates():
 
 		url = f"https://api.maptiler.com/coordinates/transform/{x1},{y1}.json?s_srs={epsg1}&t_srs={epsg2}&key={self.apiKey}"
 
-		log.debug(url)
+		log.debug(mask_url(url))
 
 		try:
 			rq = Request(url, headers={'User-Agent': USER_AGENT})
 			response = urlopen(rq, timeout=REPROJ_TIMEOUT).read().decode('utf8')
 		except (URLError, HTTPError) as err:
-			log.error('Http request fails url:{}, code:{}, error:{}'.format(url, getattr(err, 'code', 'N/A'), err.reason))
+			log.error('Http request fails url:{}, code:{}, error:{}'.format(mask_url(url), getattr(err, 'code', 'N/A'), err.reason))
 			raise
 
 		obj = json.loads(response)['results'][0]
@@ -105,13 +106,13 @@ class MapTilerCoordinates():
 		for batch in batches:
 			part = ';'.join(batch)
 			url = urlTemplate.replace("{POINTS}", part)
-			log.debug(url)
+			log.debug(mask_url(url))
 
 			try:
 				rq = Request(url, headers={'User-Agent': USER_AGENT})
 				response = urlopen(rq, timeout=REPROJ_TIMEOUT).read().decode('utf8')
 			except (URLError, HTTPError) as err:
-				log.error('Http request fails url:{}, code:{}, error:{}'.format(url, getattr(err, 'code', 'N/A'), err.reason))
+				log.error('Http request fails url:{}, code:{}, error:{}'.format(mask_url(url), getattr(err, 'code', 'N/A'), err.reason))
 				raise
 
 			obj = json.loads(response)['results']
@@ -127,7 +128,7 @@ class MapTilerCoordinates():
 		# New endpoint with API key
 		url = f"https://api.maptiler.com/coordinates/search/{query}.json?exports=true&key={self.apiKey}"
 		
-		log.debug('Search crs : {}'.format(url))
+		log.debug('Search crs : {}'.format(mask_url(url)))
 		rq = Request(url, headers={'User-Agent': USER_AGENT})
 		response = urlopen(rq, timeout=DEFAULT_TIMEOUT).read().decode('utf8')
 		obj = json.loads(response)

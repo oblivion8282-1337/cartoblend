@@ -18,6 +18,7 @@ from .utils import adjust3Dview, getBBOX, isTopView
 from ..core.proj import SRS, reprojBbox
 
 from ..core import settings
+from ..core.utils.secrets import mask_url
 USER_AGENT = settings.user_agent
 
 PKG = __package__.rsplit('.', maxsplit=1)[0]  # bl_ext.user_default.cartoblend
@@ -132,7 +133,7 @@ class IMPORTGIS_OT_dem_query(Operator):
 		ymin, ymax = bbox.ymin - e, bbox.ymax + e
 
 		url = prefs.demServer.format(W=xmin, E=xmax, S=ymin, N=ymax, API_KEY=prefs.opentopography_api_key)
-		log.debug(url)
+		log.debug(mask_url(url))
 
 		# Download the file from url and save it locally
 		# opentopo return a geotiff object in wgs84

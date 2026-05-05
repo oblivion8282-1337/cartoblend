@@ -296,6 +296,7 @@ class IMPORTGIS_OT_geojson_file(Operator):
 		# Accumulators for merged mode
 		bmeshes = {}       # name -> bmesh
 		vgroupsObj = {}    # name -> {group_name: [vertex indices]}
+		building_categories = set()  # category names that contain at least one building feature
 
 		# Collection for separate mode
 		layer = None
@@ -415,12 +416,19 @@ class IMPORTGIS_OT_geojson_file(Operator):
 				if is_building:
 					_apply_building_geonodes(obj)
 
-				# Store properties as custom props
+				# Store properties as custom props. Drop nested structures and cap
+				# strings so a verbose 'description' doesn't bloat the .blend file.
 				for k, v in props.items():
+					if isinstance(v, (dict, list, tuple)):
+						# Skipping nested values keeps custom props flat and avoids
+						# huge JSON blobs being serialised into the scene.
+						continue
 					try:
+						if isinstance(v, str) and len(v) > 1024:
+							v = v[:1024]
 						obj[k] = v
 					except Exception:
-						obj[k] = str(v)
+						obj[k] = str(v)[:1024]
 
 				# Link into collection, organised by category
 				try:
@@ -445,6 +453,8 @@ class IMPORTGIS_OT_geojson_file(Operator):
 				# Ensure 'height' layer exists on dest even if first features weren't buildings
 				if is_building and 'height' not in [l.name for l in dest_bm.faces.layers.float]:
 					dest_bm.faces.layers.float.new('height')
+				if is_building:
+					building_categories.add(objName)
 
 				bm.verts.index_update()
 				offset = len(dest_bm.verts)
@@ -481,16 +491,14 @@ class IMPORTGIS_OT_geojson_file(Operator):
 				scn.collection.objects.link(obj)
 				obj.select_set(True)
 
-				# Building GN for polygon objects that carry height data
-				if self.buildingsExtrusion and name == "Polygons":
-					# Check if any face actually has a height > 0
-					has_height = False
-					for poly in mesh.polygons:
-						# Named attribute stored via bmesh – read via attribute API
-						pass
-					# Safer: just apply if the layer exists
-					if 'height' in [attr.name for attr in mesh.attributes]:
-						_apply_building_geonodes(obj)
+				# Building GN only on categories that actually contained building features.
+				# Just probing for the height attribute is not enough — a single building
+				# feature would have the layer present on the entire merged mesh and we'd
+				# extrude unrelated polygons (parks, water, …) along with it.
+				if (self.buildingsExtrusion
+						and name in building_categories
+						and 'height' in [attr.name for attr in mesh.attributes]):
+					_apply_building_geonodes(obj)
 
 				# Vertex groups
 				vgroups = vgroupsObj.get(name)

@@ -143,13 +143,20 @@ class BBOX(dict):
 
 	def __eq__(self, bb):
 		'''Test if 2 bbox are equals'''
-		if self.xmin == bb.xmin and self.xmax == bb.xmax and self.ymin == bb.ymin and self.ymax == bb.ymax:
-			if self.hasZ and bb.hasZ:
-					if self.zmin == bb.zmin and self.zmax == bb.zmax:
-						return True
-			else:
-				return True
-		return False
+		if not isinstance(bb, BBOX):
+			return NotImplemented
+		# Same dimensionality required: a 2D bbox is never equal to a 3D one.
+		if self.hasZ != bb.hasZ:
+			return False
+		if not (self.xmin == bb.xmin and self.xmax == bb.xmax
+				and self.ymin == bb.ymin and self.ymax == bb.ymax):
+			return False
+		if self.hasZ:
+			return self.zmin == bb.zmin and self.zmax == bb.zmax
+		return True
+
+	# Equality is value-based; BBOX is mutable, so it should not be hashable.
+	__hash__ = None
 
 	def overlap(self, bb):
 		'''Test if 2 bbox objects have intersection areas (in 2D only)'''

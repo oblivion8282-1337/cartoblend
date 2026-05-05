@@ -149,7 +149,7 @@ SOURCES = {
 			"SAT" : {"urlKey" : 's', "name" : 'Satellite', "description" : '', "format" : 'jpeg', "zmin" : 0, "zmax" : 22},
 			"MAP" : {"urlKey" : 'm', "name" : 'Map', "description" : '', "format" : 'png', "zmin" : 0, "zmax" : 22}
 		},
-		"urlTemplate": "http://mt0.google.com/vt/lyrs={LAY}&x={X}&y={Y}&z={Z}",
+		"urlTemplate": "https://mt0.google.com/vt/lyrs={LAY}&x={X}&y={Y}&z={Z}",
 		"referer": "https://www.google.com/maps"
 	},
 
@@ -178,8 +178,8 @@ SOURCES = {
 			"SAT" : {"urlKey" : 'A', "name" : 'Satellite', "description" : '', "format" : 'jpeg', "zmin" : 0, "zmax" : 22},
 			"MAP" : {"urlKey" : 'G', "name" : 'Map', "description" : '', "format" : 'png', "zmin" : 0, "zmax" : 22}
 		},
-		"urlTemplate": "http://ak.dynamic.t0.tiles.virtualearth.net/comp/ch/{QUADKEY}?it={LAY}",
-		"referer": "http://www.bing.com/maps"
+		"urlTemplate": "https://ak.dynamic.t0.tiles.virtualearth.net/comp/ch/{QUADKEY}?it={LAY}",
+		"referer": "https://www.bing.com/maps"
 	},
 
 

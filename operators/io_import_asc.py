@@ -201,11 +201,16 @@ class IMPORTGIS_OT_ascii_grid(Operator, ImportHelper):
                 nrows = int(meta['nrows'])
                 ncols = int(meta['ncols'])
                 cellsize = float(meta['cellsize'])
-                nodata = float(meta['nodata_value'])
             except KeyError as e:
                 log.error("Missing required header key: %s", e)
                 self.report({'ERROR'}, "Missing required ASC header key: {}".format(e))
                 return {'CANCELLED'}
+            # NODATA_value is optional per ESRI spec; fall back to the conventional
+            # sentinel so a header without the line still imports cleanly.
+            try:
+                nodata = float(meta.get('nodata_value', -9999))
+            except (TypeError, ValueError):
+                nodata = -9999.0
 
             # options are lower left cell corner, or lower left cell centre
             reprojection = {}
@@ -259,20 +264,26 @@ class IMPORTGIS_OT_ascii_grid(Operator, ImportHelper):
                     _ = read(f, ncols)
 
                 for x in range(0, ncols, step):
-                    # TODO: exclude nodata values (implications for face generation)
                     try:
                         val = float(coldata[x])
                     except ValueError:
                         log.error('Value "{val}" in row {row}, column {col} could not be converted to a float.'.format(val=coldata[x], row=nrows-y, col=x))
                         self.report({'ERROR'}, 'Cannot convert value to float')
                         return {'CANCELLED'}
-                    if not (self.importMode == 'CLOUD' and val == nodata):
-                        pt = (x * cellsize + offset.x, y * cellsize + offset.y)
-                        if rprj:
-                            # reproject world-space source coordinate, then transform back to target local-space
-                            pt = rprjToScene.pt(pt[0] + reprojection['from'].x, pt[1] + reprojection['from'].y)
-                            pt = (pt[0] - reprojection['to'].x, pt[1] - reprojection['to'].y)
-                        vertices.append(pt + (val,))
+                    is_nodata = (val == nodata)
+                    if self.importMode == 'CLOUD' and is_nodata:
+                        # Drop nodata in point clouds: missing measurement, no point.
+                        continue
+                    if is_nodata:
+                        # Mesh mode keeps the grid topology, so we replace the
+                        # sentinel with 0.0 instead of leaving an outlier spike.
+                        val = 0.0
+                    pt = (x * cellsize + offset.x, y * cellsize + offset.y)
+                    if rprj:
+                        # reproject world-space source coordinate, then transform back to target local-space
+                        pt = rprjToScene.pt(pt[0] + reprojection['from'].x, pt[1] + reprojection['from'].y)
+                        pt = (pt[0] - reprojection['to'].x, pt[1] - reprojection['to'].y)
+                    vertices.append(pt + (val,))
 
         if self.importMode == 'MESH':
             step_ncols = math.ceil(ncols / step)

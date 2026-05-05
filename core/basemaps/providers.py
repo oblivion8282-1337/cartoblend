@@ -17,10 +17,44 @@ without any further changes downstream.
 
 import json
 import logging
+import re
+from urllib.parse import urlparse
 
 from .servicesDefs import SOURCES, GRIDS
 
 log = logging.getLogger(__name__)
+
+
+# Custom-provider keys flow into cache filenames; restrict to a safe charset
+# so no '../' / path-separator can escape the cache directory.
+_SAFE_KEY_RE = re.compile(r'[^A-Za-z0-9_.-]')
+
+
+def safe_provider_key(key):
+	"""Return key reduced to characters safe for use in filesystem paths.
+
+	Empty or all-stripped input falls back to 'CUSTOM' so we never produce a
+	bare extension like ".gpkg" or an empty join target.
+	"""
+	if not key:
+		return 'CUSTOM'
+	cleaned = _SAFE_KEY_RE.sub('_', str(key))
+	return cleaned or 'CUSTOM'
+
+
+def is_safe_url(url):
+	"""Return True if the URL uses an http(s) scheme. Used to reject file://,
+	javascript:, ftp:// and other schemes from user-supplied templates so
+	urlopen() can't be coerced into local-file reads or SSRF surprises."""
+	if not isinstance(url, str) or not url:
+		return False
+	# Tile templates contain {X}/{Y}/{Z} placeholders. urlparse treats them as
+	# part of the path which is fine; only the scheme matters for safety.
+	try:
+		parsed = urlparse(url)
+	except (ValueError, TypeError):
+		return False
+	return parsed.scheme in ('http', 'https') and bool(parsed.netloc)
 
 
 # Map from source key to the addon-prefs attribute that holds its API key.
@@ -161,6 +195,9 @@ def inject_custom_into_sources(prefs):
 		url = url.replace('{x}', '{X}').replace('{y}', '{Y}').replace('{z}', '{Z}')
 		# Strip retina/ext placeholders that we don't support.
 		url = url.replace('{r}', '').replace('{ext}', ov.get('format', 'png'))
+		if not is_safe_url(url):
+			log.warning('Skipping custom provider %r: URL scheme is not http(s) or URL is empty', key)
+			continue
 		SOURCES[key] = {
 			'name': ov.get('name', key),
 			'description': ov.get('description', ''),
@@ -254,6 +291,10 @@ def _adapt_xyz_entry(entry):
 	leftovers = re.findall(r'\{([^}]+)\}', mapped)
 	leftovers = [m for m in leftovers if m not in ('Z', 'X', 'Y')]
 	if leftovers:
+		return None
+	# Reject anything that doesn't end up as plain http(s) — defense in depth
+	# in case xyzservices ships a non-tile entry we'd otherwise inject.
+	if not is_safe_url(mapped):
 		return None
 	# Heuristic format: extension in URL wins, else infer from ext field.
 	ext_lower = (entry.get('ext') or '').lower()

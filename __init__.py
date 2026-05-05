@@ -95,6 +95,12 @@ except PermissionError:
 	#logsFilePath = os.path.join(bpy.app.tempdir, logsFileName)
 	logsFilePath = os.path.join(tempfile.gettempdir(), logsFileName)
 	logHandler = RotatingFileHandler(logsFilePath, mode='a', maxBytes=512000, backupCount=1)
+# Logs may contain URLs which could leak credentials if a debug-level log
+# slips through. Restrict the file to the owner.
+try:
+	os.chmod(logsFilePath, 0o600)
+except OSError:
+	pass
 logHandler.setFormatter(logging.Formatter(logsFormat, style='{'))
 logger = logging.getLogger(__name__)
 logger.addHandler(logHandler)
@@ -102,27 +108,37 @@ logger.setLevel(logging.DEBUG)
 logger.info('###### Starting new Blender session : {}'.format(datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
 
 def _excepthook(exc_type, exc_value, exc_traceback):
+	"""Log uncaught exceptions that originate inside this addon.
+
+	Walks the full traceback because the outermost frame is rarely our code.
+	"""
 	if exc_traceback is None:
 		sys.__excepthook__(exc_type, exc_value, exc_traceback)
 		return
-	if 'cartoblend' in exc_traceback.tb_frame.f_code.co_filename or 'CartoBlend' in exc_traceback.tb_frame.f_code.co_filename:
+	tb = exc_traceback
+	from_us = False
+	while tb is not None:
+		fn = tb.tb_frame.f_code.co_filename
+		if 'cartoblend' in fn or 'CartoBlend' in fn:
+			from_us = True
+			break
+		tb = tb.tb_next
+	if from_us:
 		logger.error("Uncaught exception", exc_info=(exc_type, exc_value, exc_traceback))
 	sys.__excepthook__(exc_type, exc_value, exc_traceback)
 
-sys.excepthook = _excepthook #warn, this is a global variable, can be overrided by another addon
 
-####
-'''
-Workaround for `sys.excepthook` thread
-https://stackoverflow.com/questions/1643327/sys-excepthook-and-threading
-'''
+# Workaround so background threads (Thread subclasses) route their unhandled
+# exceptions through sys.excepthook. Original recipe:
+# https://stackoverflow.com/questions/1643327/sys-excepthook-and-threading
 import threading
 
-init_original = threading.Thread.__init__
+_thread_init_original = None
+_prev_excepthook = None
 
-def init(self, *args, **kwargs):
 
-	init_original(self, *args, **kwargs)
+def _patched_thread_init(self, *args, **kwargs):
+	_thread_init_original(self, *args, **kwargs)
 	run_original = self.run
 
 	def run_with_except_hook(*args2, **kwargs2):
@@ -133,9 +149,30 @@ def init(self, *args, **kwargs):
 
 	self.run = run_with_except_hook
 
-threading.Thread.__init__ = init
 
-####
+def _install_global_hooks():
+	"""Install excepthook + Thread.__init__ patch. Idempotent."""
+	global _thread_init_original, _prev_excepthook
+	if _prev_excepthook is None:
+		_prev_excepthook = sys.excepthook
+		sys.excepthook = _excepthook
+	if _thread_init_original is None:
+		_thread_init_original = threading.Thread.__init__
+		threading.Thread.__init__ = _patched_thread_init
+
+
+def _uninstall_global_hooks():
+	"""Restore original excepthook + Thread.__init__. Idempotent."""
+	global _thread_init_original, _prev_excepthook
+	if _prev_excepthook is not None:
+		# Only restore if no other addon chained on top of ours.
+		if sys.excepthook is _excepthook:
+			sys.excepthook = _prev_excepthook
+		_prev_excepthook = None
+	if _thread_init_original is not None:
+		if threading.Thread.__init__ is _patched_thread_init:
+			threading.Thread.__init__ = _thread_init_original
+		_thread_init_original = None
 
 
 #from .core.checkdeps import HAS_GDAL, HAS_PYPROJ, HAS_PIL, HAS_IMGIO
@@ -503,7 +540,35 @@ panels = [
 ]
 
 
+def _submodule_steps():
+	"""Yield (label, register_fn, unregister_fn) for each gated sub-feature in
+	the order they should be registered. Used by register/unregister so the
+	rollback path stays in lockstep with the install path."""
+	steps = [
+		(BASEMAPS, 'view3d_mapviewer', view3d_mapviewer if BASEMAPS else None),
+		(IMPORT_GEORASTER, 'io_import_georaster', io_import_georaster if IMPORT_GEORASTER else None),
+		(IMPORT_SHP, 'io_import_shp', io_import_shp if IMPORT_SHP else None),
+		(EXPORT_SHP, 'io_export_shp', io_export_shp if EXPORT_SHP else None),
+		(IMPORT_OSM, 'io_import_osm', io_import_osm if IMPORT_OSM else None),
+		(IMPORT_ASC, 'io_import_asc', io_import_asc if IMPORT_ASC else None),
+		(IMPORT_GEOJSON, 'io_import_geojson', io_import_geojson if IMPORT_GEOJSON else None),
+		(IMPORT_GPX, 'io_import_gpx', io_import_gpx if IMPORT_GPX else None),
+		(DELAUNAY, 'mesh_delaunay_voronoi', mesh_delaunay_voronoi if DELAUNAY else None),
+		(DROP, 'object_drop', object_drop if DROP else None),
+		(GET_DEM, 'io_get_dem', io_get_dem if GET_DEM else None),
+		(CAM_GEOPHOTO, 'add_camera_exif', add_camera_exif if CAM_GEOPHOTO else None),
+		(CAM_GEOREF, 'add_camera_georef', add_camera_georef if CAM_GEOREF else None),
+		(TERRAIN_NODES, 'nodes_terrain_analysis_builder', nodes_terrain_analysis_builder if TERRAIN_NODES else None),
+		(TERRAIN_RECLASS, 'nodes_terrain_analysis_reclassify', nodes_terrain_analysis_reclassify if TERRAIN_RECLASS else None),
+		(EARTH_SPHERE, 'mesh_earth_sphere', mesh_earth_sphere if EARTH_SPHERE else None),
+	]
+	for enabled, label, mod in steps:
+		if enabled and mod is not None:
+			yield label, mod.register, mod.unregister
+
+
 def register():
+	_install_global_hooks()
 	#icons
 	global icons_dict
 	icons_dict = iconsLib.new()
@@ -512,53 +577,49 @@ def register():
 		name, ext = os.path.splitext(icon)
 		icons_dict.load(name, os.path.join(icons_dir, icon), 'IMAGE')
 
-	#operators
-	prefs.register()
+	# Track every successful step so we can roll back on failure and leave
+	# Blender in a clean state instead of half-registered.
+	rollback = []
 
-	for panel in panels:
-		try:
-			bpy.utils.register_class(panel)
-		except ValueError as e:
-			logger.warning('{} is already registered, now unregister and retry... '.format(panel))
-			bpy.utils.unregister_class(panel)
-			bpy.utils.register_class(panel)
+	def _undo():
+		for fn, label in reversed(rollback):
+			try:
+				fn()
+			except Exception:
+				logger.exception('Rollback step failed for %s', label)
 
-	geoscene.register()
+	try:
+		prefs.register()
+		rollback.append((prefs.unregister, 'prefs'))
 
-	bpy.utils.register_class(BGIS_OT_logs)
+		registered_panels = []
+		for panel in panels:
+			try:
+				bpy.utils.register_class(panel)
+			except ValueError:
+				logger.warning('%s is already registered, now unregister and retry…', panel)
+				bpy.utils.unregister_class(panel)
+				bpy.utils.register_class(panel)
+			registered_panels.append(panel)
+		def _undo_panels():
+			for p in reversed(registered_panels):
+				bpy.utils.unregister_class(p)
+		rollback.append((_undo_panels, 'panels'))
 
-	if BASEMAPS:
-		view3d_mapviewer.register()
-	if IMPORT_GEORASTER:
-		io_import_georaster.register()
-	if IMPORT_SHP:
-		io_import_shp.register()
-	if EXPORT_SHP:
-		io_export_shp.register()
-	if IMPORT_OSM:
-		io_import_osm.register()
-	if IMPORT_ASC:
-		io_import_asc.register()
-	if IMPORT_GEOJSON:
-		io_import_geojson.register()
-	if IMPORT_GPX:
-		io_import_gpx.register()
-	if DELAUNAY:
-		mesh_delaunay_voronoi.register()
-	if DROP:
-		object_drop.register()
-	if GET_DEM:
-		io_get_dem.register()
-	if CAM_GEOPHOTO:
-		add_camera_exif.register()
-	if CAM_GEOREF:
-		add_camera_georef.register()
-	if TERRAIN_NODES:
-		nodes_terrain_analysis_builder.register()
-	if TERRAIN_RECLASS:
-		nodes_terrain_analysis_reclassify.register()
-	if EARTH_SPHERE:
-		mesh_earth_sphere.register()
+		geoscene.register()
+		rollback.append((geoscene.unregister, 'geoscene'))
+
+		bpy.utils.register_class(BGIS_OT_logs)
+		rollback.append((lambda: bpy.utils.unregister_class(BGIS_OT_logs), 'BGIS_OT_logs'))
+
+		for label, reg_fn, unreg_fn in _submodule_steps():
+			reg_fn()
+			rollback.append((unreg_fn, label))
+	except Exception:
+		logger.exception('CartoBlend register() failed, rolling back')
+		_undo()
+		_uninstall_global_hooks()
+		raise
 
 	#N-panel is registered via panel classes, no header menu needed
 
@@ -580,7 +641,13 @@ def register():
 		#update core settings according to addon prefs
 		settings.proj_engine = preferences.projEngine
 		settings.img_engine = preferences.imgEngine
+		# Sync every API key/token to the core settings singleton so backends
+		# that consult settings.* (rather than re-reading prefs) see the
+		# restored credentials immediately, not only after the first keystroke.
 		settings.maptiler_api_key = preferences.maptiler_api_key
+		settings.mapbox_token = getattr(preferences, 'mapbox_token', '') or None
+		settings.thunderforest_api_key = getattr(preferences, 'thunderforest_api_key', '') or None
+		settings.stadia_api_key = getattr(preferences, 'stadia_api_key', '') or None
 	except KeyError:
 		logger.warning('Could not access addon preferences')
 
@@ -640,6 +707,8 @@ def unregister():
 		nodes_terrain_analysis_reclassify.unregister()
 	if EARTH_SPHERE:
 		mesh_earth_sphere.unregister()
+
+	_uninstall_global_hooks()
 
 if __name__ == "__main__":
 	register()

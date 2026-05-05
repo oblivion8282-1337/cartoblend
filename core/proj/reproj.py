@@ -173,7 +173,7 @@ def reprojImg(crs1, crs2, ds1, out_ul=None, out_size=None, out_res=None, sqPx=Fa
 	# Error in pixels (0 will use the exact transformer)
 	threshold = 0.25
 	# Warp options (http://www.gdal.org/structGDALWarpOptions.html)
-	opt = ['NUM_THREADS=ALL_CPUS, SAMPLE_GRID=YES']
+	opt = ['NUM_THREADS=ALL_CPUS', 'SAMPLE_GRID=YES']
 	#option parameters available since gdal 2.1
 	try:
 		a, b, c = gdal.__version__.split('.', 2)
@@ -309,6 +309,39 @@ class Reproj():
 		return self.pts([(x,y)])[0]
 
 
+	def pts3D(self, pts):
+		"""Reproject 3D points. Z is passed through 3D-aware backends (GDAL,
+		PYPROJ) so vertical-datum changes are honoured; for backends without
+		3D support Z is preserved unchanged."""
+		if len(pts) == 0:
+			return []
+		if len(pts[0]) != 3:
+			raise ReprojError('Points must be [ (x,y,z) ]')
+		if self.iproj == 'NO_REPROJ':
+			return list(pts)
+		if self.iproj == 'GDAL':
+			if hasattr(osr, 'GetPROJVersionMajor'):
+				projVersion = osr.GetPROJVersionMajor()
+			else:
+				projVersion = 4
+			if projVersion >= 6 and self.crs1.IsGeographic():
+				input_pts = [(pt[1], pt[0], pt[2]) for pt in pts]
+			else:
+				input_pts = list(pts)
+			out = self.osrTransfo.TransformPoints(input_pts)
+			if self.crs2.IsGeographic():
+				return [(p[1], p[0], p[2]) for p in out]
+			return [(p[0], p[1], p[2]) for p in out]
+		elif self.iproj == 'PYPROJ':
+			xs, ys, zs = zip(*pts)
+			xs, ys, zs = self._transformer.transform(xs, ys, zs)
+			return list(zip(xs, ys, zs))
+		else:
+			# EPSGIO / BUILTIN: only XY transformation, keep Z untouched.
+			xy = self.pts([(p[0], p[1]) for p in pts])
+			return [(x, y, p[2]) for (x, y), p in zip(xy, pts)]
+
+
 	def bbox(self, bbox):
 		'''io type = BBOX() class'''
 		if not isinstance(bbox, BBOX):
@@ -332,8 +365,11 @@ _REPROJ_CACHE = {}
 _REPROJ_CACHE_MAX = 16
 
 def _get_reproj(crs1, crs2):
+	# Include the active proj engine in the cache key so a runtime engine
+	# switch (e.g. user toggles GDAL ↔ PYPROJ in prefs) doesn't keep returning
+	# stale Reproj instances bound to the previous backend.
 	try:
-		key = (crs1, crs2)
+		key = (crs1, crs2, settings.proj_engine)
 		hash(key)
 	except TypeError:
 		# Non-hashable crs (e.g. raw proj4 dict): skip caching.

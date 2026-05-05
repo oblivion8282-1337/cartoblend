@@ -73,7 +73,7 @@ def replace_nans(array, max_iter, tolerance, kernel_size=1, method='localmean'):
 		kernel = np.array([[0, 0.5, 0.5, 0.5, 0],
 				  [0.5, 0.75, 0.75, 0.75, 0.5],
 				  [0.5, 0.75, 1, 0.75, 0.5],
-				  [0.5, 0.75, 0.75, 0.5, 1],
+				  [0.5, 0.75, 0.75, 0.75, 0.5],
 				  [0, 0.5, 0.5, 0.5, 0]], dtype=DTYPEf)
 	else:
 		raise ValueError("method not valid. Should be one of 'localmean', 'idw'.")

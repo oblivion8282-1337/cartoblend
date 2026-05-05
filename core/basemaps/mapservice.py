@@ -37,8 +37,9 @@ import sys, time, os
 #core imports
 from .servicesDefs import GRIDS, SOURCES
 from .gpkg import GeoPackage
+from .providers import safe_provider_key
 from ..georaster import NpImage, GeoRef, BigTiffWriter
-from ..utils import BBOX
+from ..utils import BBOX, mask_url
 from ..proj.reproj import reprojPt, reprojBbox, reprojImg
 from ..proj.ellps import dd2meters, meters2dd
 from ..proj.srs import SRS
@@ -509,7 +510,7 @@ class _ConnectionPool():
 				if resp.status == 200:
 					return data
 				else:
-					log.debug("HTTP %s for %s", resp.status, url)
+					log.debug("HTTP %s for %s", resp.status, mask_url(url))
 					return None
 			except (http.client.RemoteDisconnected,
 					http.client.CannotSendRequest,
@@ -575,8 +576,12 @@ class MapService():
 		4 = reprojecting
 	"""
 
-	# resampling algo for reprojection
-	RESAMP_ALG = 'BL' #NN:Nearest Neighboor, BL:Bilinear, CB:Cubic, CBS:Cubic Spline, LCZ:Lanczos
+	# Default resampling algo for reprojection. Per-instance override via
+	# self.resampAlg lets multiple MapServices coexist without globally
+	# clobbering each other's choice.
+	# Allowed: NN (Nearest), BL (Bilinear), CB (Cubic), CBS (Cubic Spline), LCZ (Lanczos).
+	RESAMP_ALG = 'BL'
+	_RESAMP_ALG_VALID = ('NN', 'BL', 'CB', 'CBS', 'LCZ')
 
 	def __init__(self, srckey, cacheFolder, dstGridKey=None):
 
@@ -607,14 +612,18 @@ class MapService():
 		#Init cache dict
 		self.cacheFolder = cacheFolder
 		self.caches = {}
+		# Snapshot the cache-expiry pref once, in the main thread. Worker
+		# threads later instantiate GeoPackage caches and would otherwise
+		# touch bpy.context, which is undefined behaviour off-thread.
+		self._cacheExpiryDays = GeoPackage._read_max_days_from_prefs()
+		# Per-instance resampling algorithm; defaults to the class fallback.
+		self.resampAlg = self.RESAMP_ALG
 
-		#Fake browser header
+		#Fake browser header (locale-neutral so we don't leak a French Accept-Language)
 		self.headers = {
 			'Accept' : 'image/png,image/*;q=0.8,*/*;q=0.5' ,
-			'Accept-Charset' : 'ISO-8859-1,utf-8;q=0.7,*;q=0.7' ,
+			'Accept-Charset' : 'utf-8,*;q=0.7' ,
 			#'Accept-Encoding' : 'gzip,deflate', #urllib2 doesn't automatically uncompress the data
-			'Accept-Language' : 'fr,en-us,en;q=0.5' ,
-			#'Keep-Alive': 115 ,
 			'Proxy-Connection' : 'keep-alive',
 			'User-Agent' : USER_AGENT,
 			'Referer' : self.referer}
@@ -642,14 +651,13 @@ class MapService():
 			_cdse_auth.load_credentials()
 
 	def reportLoop(self):
+		# Polled at 5 Hz instead of 20 Hz to keep the daemon thread cheap when
+		# Blender runs detached from a console (the ANSI escapes go nowhere).
 		msg = self.report
 		while self.running:
-			time.sleep(0.05)
+			time.sleep(0.2)
 			if self.report != msg:
-				#sys.stdout.write("\033[F") #back to previous line
-				sys.stdout.write("\033[K") #clear line
-				sys.stdout.flush()
-				print(self.report, end='\r') #'\r' will move the cursor back to the beginning of the line
+				log.debug(self.report)
 				msg = self.report
 
 	def start(self):
@@ -659,7 +667,14 @@ class MapService():
 		reporter.start()
 
 	def stop(self):
+		"""Signal worker threads to abort. Does NOT close the connection pool;
+		callers must invoke cleanup() AFTER joining the worker thread, otherwise
+		conn.close() races against in-flight conn.request/getresponse calls."""
 		self.running = False
+
+	def cleanup(self):
+		"""Release HTTP connections. Safe only after all worker threads using
+		this service have been joined."""
 		self._connPool.close_all()
 
 	@property
@@ -699,11 +714,14 @@ class MapService():
 			tm = self.srcTms
 
 		mapKey = self.srckey + '_' + laykey + '_' + grdkey
+		# srckey/laykey/grdkey may include user-defined provider keys → strip
+		# anything that could escape the cache folder before building a path.
+		safeName = '_'.join(safe_provider_key(p) for p in (self.srckey, laykey, grdkey))
 		with self.lock:
 			cache = self.caches.get(mapKey)
 			if cache is None:
-				dbPath = os.path.join(self.cacheFolder, mapKey + ".gpkg")
-				self.caches[mapKey] = GeoPackage(dbPath, tm)
+				dbPath = os.path.join(self.cacheFolder, safeName + ".gpkg")
+				self.caches[mapKey] = GeoPackage(dbPath, tm, max_days=self._cacheExpiryDays)
 				return self.caches[mapKey]
 			else:
 				return cache
@@ -803,13 +821,15 @@ class MapService():
 
 	def isTileInMapsBounds(self, col, row, zoom, tm):
 		'''Test if the tile is not out of tile matrix bounds'''
-		x,y = tm.getTileCoords(col, row, zoom) #top left
 		if row < 0 or col < 0:
 			return False
-		elif not tm.xmin <= x < tm.xmax or not tm.ymin < y <= tm.ymax:
-			return False
-		else:
-			return True
+		# Compare against tile-grid dimensions rather than projected bounds
+		# so the check is independent of NW/SW origin and immune to floating
+		# point edges at the matrix border.
+		geoTileSize = tm.tileSize * tm.getRes(zoom)
+		nbCols = math.ceil((tm.xmax - tm.xmin) / geoTileSize)
+		nbRows = math.ceil((tm.ymax - tm.ymin) / geoTileSize)
+		return col < nbCols and row < nbRows
 
 
 	def downloadTile(self, laykey, col, row, zoom):
@@ -825,7 +845,7 @@ class MapService():
 			return self._downloadTileCDSE(laykey, col, row, zoom)
 
 		url = self.buildUrl(laykey, col, row, zoom)
-		log.debug(url)
+		log.debug(mask_url(url))
 
 		try:
 			#make request using pooled persistent connection
@@ -841,7 +861,7 @@ class MapService():
 				data = None
 
 		if data is None:
-			log.debug("Invalid tile data for request %s", url)
+			log.debug("Invalid tile data for request %s", mask_url(url))
 
 		return data
 
@@ -982,7 +1002,7 @@ class MapService():
 
 		#Reprojection
 		tileSize = self.dstTms.tileSize
-		img = NpImage(reprojImg(crs1, crs2, mosaic.toGDAL(), out_ul=(xmin,ymax), out_size=(tileSize,tileSize), out_res=res, sqPx=True, resamplAlg=self.RESAMP_ALG))
+		img = NpImage(reprojImg(crs1, crs2, mosaic.toGDAL(), out_ul=(xmin,ymax), out_size=(tileSize,tileSize), out_res=res, sqPx=True, resamplAlg=self.resampAlg))
 
 		return img.toBLOB()
 
@@ -1259,10 +1279,10 @@ class MapService():
 			#Status update is read asynchronously, no sleep needed
 
 			if not bigTiff:
-				mosaic = NpImage(reprojImg(tm.CRS, outCRS, mosaic.toGDAL(), sqPx=True, resamplAlg=self.RESAMP_ALG))
+				mosaic = NpImage(reprojImg(tm.CRS, outCRS, mosaic.toGDAL(), sqPx=True, resamplAlg=self.resampAlg))
 			else:
 				outPath = path[:-4] + '_' + str(outCRS) + '.tif'
-				ds = reprojImg(tm.CRS, outCRS, mosaic.ds, sqPx=True, resamplAlg=self.RESAMP_ALG, path=outPath)
+				ds = reprojImg(tm.CRS, outCRS, mosaic.ds, sqPx=True, resamplAlg=self.resampAlg, path=outPath)
 
 		#build overviews for file output
 		if bigTiff:

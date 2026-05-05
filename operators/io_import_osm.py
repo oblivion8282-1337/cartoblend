@@ -20,6 +20,7 @@ from ..core.proj import Reproj, reprojBbox, reprojPt, utm
 from ..core.utils import perf_clock
 
 from ..core import settings
+from ..core.utils.secrets import mask_url, mask_text
 USER_AGENT = settings.user_agent
 
 PKG = __package__.rsplit('.', maxsplit=1)[0]  # bl_ext.user_default.cartoblend
@@ -1020,6 +1021,17 @@ class OSM_IMPORT():
 			if has_part:
 				outline_skip_ids.update(rel_outlines)
 
+		# Index relations by member ref → [(name, member_role)] so seed() can
+		# look up vertex-group memberships in O(1) instead of scanning every
+		# relation × every member for each feature (was the dominant cost on
+		# city-sized bboxes).
+		member_to_relations = {}
+		if 'relation' in self.featureType:
+			for rel in result.relations:
+				rel_name = rel.tags.get('name', str(rel.id))
+				for member in rel.members:
+					member_to_relations.setdefault(member.ref, []).append(rel_name)
+
 		#######
 		def seed(id, tags, pts, extags):
 			'''
@@ -1192,10 +1204,9 @@ class OSM_IMPORT():
 						street_w = HIGHWAY_WIDTHS.get(hw_type, DEFAULT_STREET_WIDTH)
 						#OSM width tag overrides default
 						if 'width' in tags:
-							try:
-								street_w = float(tags['width'].replace('m','').replace(',','.').strip())
-							except ValueError:
-								pass
+							parsed_w = _parseMeters(tags['width'])
+							if parsed_w is not None:
+								street_w = parsed_w
 						for v in verts:
 							v[width_layer] = street_w
 
@@ -1303,13 +1314,10 @@ class OSM_IMPORT():
 							vgroup.extend(vidx)
 
 						if 'relation' in self.featureType:
-							for rel in result.relations:
-								name = rel.tags.get('name', str(rel.id))
-								for member in rel.members:
-									#todo: remove duplicate members
-									if id == member.ref:
-										vgroup = vgroups.setdefault('Relation:'+name, [])
-										vgroup.extend(vidx)
+							# O(1) lookup of all relations whose member.ref matches `id`.
+							for rel_name in member_to_relations.get(id, ()):
+								vgroup = vgroups.setdefault('Relation:'+rel_name, [])
+								vgroup.extend(vidx)
 
 
 
@@ -1484,10 +1492,14 @@ class IMPORTGIS_OT_osm_file(Operator, OSM_IMPORT):
 		#Parse file
 		t0 = perf_clock()
 		api = overpy.Overpass()
-		# Block billion-laughs / entity-expansion DoS by refusing files with a DTD.
+		# Block billion-laughs / entity-expansion DoS by refusing files with a
+		# DTD. Scan the whole file (capped at 32 MiB) instead of just the
+		# first 8 KiB so a leading whitespace/comment block can't smuggle
+		# the marker past the prefix check.
 		try:
+			MAX_SCAN = 32 * 1024 * 1024
 			with open(self.filepath, 'rb') as fh:
-				head = fh.read(8192).lower()
+				head = fh.read(MAX_SCAN).lower()
 			if b'<!doctype' in head or b'<!entity' in head:
 				self.report({'ERROR'}, "OSM file contains a DOCTYPE/ENTITY declaration; refused for safety")
 				return {'CANCELLED'}
@@ -1694,10 +1706,10 @@ class IMPORTGIS_OT_osm_query(Operator, OSM_IMPORT):
 		w.cursor_set('WAIT')
 
 		#Download from overpass api
-		log.debug('Requests overpass server : {}'.format(prefs.overpassServer))
+		log.debug('Requests overpass server : {}'.format(mask_url(prefs.overpassServer)))
 		api = overpy.Overpass(overpass_server=prefs.overpassServer, user_agent=USER_AGENT)
 		query = queryBuilder(bbox, tags=list(tags), types=list(types), format='xml')
-		log.debug('Overpass query : {}'.format(query)) # can fails with non utf8 chars
+		log.debug('Overpass query : {}'.format(mask_text(query))) # can fails with non utf8 chars
 
 		try:
 			result = api.query(query)
