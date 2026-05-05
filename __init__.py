@@ -243,9 +243,8 @@ class VIEW3D_PT_gis_map(bpy.types.Panel):
 					for i, q in enumerate(_hist[:5]):
 						op = col.operator("view3d.map_goto_history", text=q, icon='DOT')
 						op.index = i
-			# Source / Layer
-			layout.prop(context.scene.gis_basemap, 'src', text='Source')
-			layout.prop(context.scene.gis_basemap, 'lay', text='Layer')
+			# Single flat provider picker — replaces the old Source + Layer split.
+			layout.prop(context.scene.gis_basemap, 'provider', text='Basemap')
 			# Start / Resume / Export — context-dependent
 			_mv2 = sys.modules.get(__package__ + '.operators.view3d_mapviewer')
 			viewer_active = _mv2 and getattr(_mv2, '_map_viewer_active', False)

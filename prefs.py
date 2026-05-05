@@ -4,14 +4,15 @@ log = logging.getLogger(__name__)
 import sys, os
 
 import bpy
-from bpy.props import StringProperty, IntProperty, FloatProperty, BoolProperty, EnumProperty, FloatVectorProperty
-from bpy.types import Operator, Panel, AddonPreferences
+from bpy.props import StringProperty, IntProperty, FloatProperty, BoolProperty, EnumProperty, FloatVectorProperty, CollectionProperty, PointerProperty
+from bpy.types import Operator, Panel, AddonPreferences, UIList, PropertyGroup
 import addon_utils
 
 from . import bl_info
 from .core.proj.reproj import MapTilerCoordinates
 from .core.proj.srs import SRS
 from .core.checkdeps import HAS_GDAL, HAS_PYPROJ, HAS_PIL, HAS_IMGIO
+from .core.basemaps import providers as providers_mod
 from .core import settings
 
 PKG = __package__
@@ -162,6 +163,63 @@ DEFAULT_OSM_TAGS = [
 
 
 
+# ---------------------------------------------------------------------------
+# Provider list (UIList row data)
+# ---------------------------------------------------------------------------
+# Each row in the Map Tile Providers list maps a single compound_key
+# ('OpenStreetMap.Mapnik', 'My Tile Server', …) to a checkbox plus enough
+# metadata to render the row. The collection is rebuilt from
+# providers_mod.get_catalog(prefs) on every prefs reload — we never edit the
+# collection in place and persist instead through customProvidersJson.
+
+class GIS_PG_provider_row(PropertyGroup):
+	key: StringProperty()
+	display_name: StringProperty()
+	description: StringProperty()
+	visible: BoolProperty(name='', description='Show in basemap dropdown',
+		default=True, update=lambda self, ctx: _persist_visibility(self, ctx))
+	is_custom: BoolProperty(default=False)
+	needs_key: BoolProperty(default=False)
+
+
+def _persist_visibility(row, context):
+	"""Write the toggled visibility back into customProvidersJson so it
+	survives addon reload."""
+	try:
+		prefs = context.preferences.addons[PKG].preferences
+	except (KeyError, AttributeError):
+		return
+	overrides = providers_mod.get_user_overrides(prefs)
+	entry = overrides.get(row.key, {})
+	entry['visible'] = bool(row.visible)
+	# For custom entries we need to keep their is_custom flag to round-trip
+	if row.is_custom:
+		entry['is_custom'] = True
+	overrides[row.key] = entry
+	providers_mod.set_user_overrides(prefs, overrides)
+
+
+def rebuild_providers_collection(prefs):
+	"""Sync the in-memory CollectionProperty from the catalog. Idempotent.
+	Called on register, after Add/Edit/Remove ops, and after Refresh."""
+	col = prefs.providers_collection
+	# Preserve current selection index across rebuilds.
+	prev_index = prefs.providers_index
+	col.clear()
+	for entry in providers_mod.get_catalog(prefs):
+		row = col.add()
+		row.key = entry['key']
+		row.display_name = entry['name']
+		row.description = entry.get('description', '')
+		row.visible = entry.get('visible', True)
+		row.is_custom = entry.get('is_custom', False)
+		row.needs_key = bool(entry.get('needs_key_attrs'))
+	if prev_index >= len(col):
+		prefs.providers_index = max(0, len(col) - 1)
+	# Refresh injection so MapService can resolve any newly-edited customs.
+	providers_mod.inject_custom_into_sources(prefs)
+
+
 class BGIS_OT_pref_show(Operator):
 
 	bl_idname = "bgis.pref_show"
@@ -199,6 +257,14 @@ class BGIS_PREFS(AddonPreferences):
 
 	#store crs preset as json string into addon preferences
 	predefCrsJson: StringProperty(default=json.dumps(DEFAULT_CRS))
+
+	#User-managed provider catalog (overrides + custom entries) as JSON dict
+	#{compound_key: {visible, is_custom, name, url, format, ...}}.
+	customProvidersJson: StringProperty(default='')
+
+	#In-memory mirror of the provider catalog used by the UIList in prefs.
+	providers_collection: CollectionProperty(type=GIS_PG_provider_row)
+	providers_index: IntProperty(default=0)
 
 	predefCrs: EnumProperty(
 		name = "Predefinate CRS",
@@ -506,6 +572,31 @@ class BGIS_PREFS(AddonPreferences):
 			secondary_attr='cdse_client_secret')
 		self._draw_provider_row(box, 'OpenTopography (DEM)', 'opentopography_api_key',
 			register_url=self._REGISTER_URLS['opentopography_api_key'])
+
+		# ── Basemap Catalog ───────────────────────────────────────────────────
+		# One UIList of all providers. Tick a row to make it appear in the
+		# 3D-View basemap dropdown. Power users can add their own URL or
+		# override an existing entry. Hide built-ins they never want, delete
+		# their own customs.
+		box = layout.box()
+		row = box.row()
+		row.label(text='Basemap Catalog', icon='WORLD')
+		visible_count = sum(1 for r in self.providers_collection if r.visible)
+		row.label(text='{} of {} visible in 3D-View'.format(
+			visible_count, len(self.providers_collection)))
+		row = box.row()
+		row.template_list(
+			'GIS_UL_providers', '',
+			self, 'providers_collection',
+			self, 'providers_index',
+			rows=8,
+		)
+		col = row.column(align=True)
+		col.operator('bgis.add_provider', icon='ADD', text='')
+		col.operator('bgis.edit_provider', icon='GREASEPENCIL', text='')
+		col.operator('bgis.remove_provider', icon='REMOVE', text='')
+		col.separator()
+		col.operator('bgis.reset_providers', icon='LOOP_BACK', text='')
 
 		# ── Tile Cache ────────────────────────────────────────────────────────
 		box = layout.box()
@@ -1177,7 +1268,240 @@ class BGIS_OT_cache_clear_expired(Operator):
 		return {'FINISHED'}
 
 
+# ---------------------------------------------------------------------------
+# Map Tile Providers — UIList + Add/Edit/Remove/Reset operators
+# ---------------------------------------------------------------------------
+
+class GIS_UL_providers(UIList):
+	def draw_item(self, context, layout, data, item, icon, active_data, active_propname, index):
+		row = layout.row(align=True)
+		row.prop(item, 'visible', text='')
+		# Greyed out if a key is required but not yet configured
+		sub = row.row()
+		if item.needs_key:
+			sub.label(text='', icon='LOCKED')
+		else:
+			sub.label(text='', icon='CHECKMARK' if item.visible else 'BLANK1')
+		sub.label(text=item.display_name)
+		if item.is_custom:
+			sub.label(text='custom', icon='USER')
+
+
+def _format_items(self, context):
+	return [
+		('png', 'PNG', 'Lossless raster — best for maps with text/lines'),
+		('jpg', 'JPG', 'Compressed — best for satellite/aerial photography'),
+		('jpeg', 'JPEG', 'Same as JPG'),
+	]
+
+
+def _grid_items(self, context):
+	from .core.basemaps.servicesDefs import GRIDS
+	return [(k, v.get('name', k), v.get('description', '')) for k, v in GRIDS.items()]
+
+
+class BGIS_OT_add_provider(Operator):
+	bl_idname = "bgis.add_provider"
+	bl_description = 'Add a custom map tile provider'
+	bl_label = "Add Provider"
+	bl_options = {'INTERNAL'}
+
+	display_name: StringProperty(name='Name', description='Shown in the basemap dropdown',
+		default='My Tile Server')
+	url: StringProperty(name='URL Template',
+		description='URL with {z}/{x}/{y} placeholders, e.g. https://my.tiles/{z}/{x}/{y}.png',
+		default='https://example.com/tiles/{z}/{x}/{y}.png')
+	format: EnumProperty(name='Format', items=_format_items, default=0)
+	zmin: IntProperty(name='Min Zoom', default=0, min=0, max=22)
+	zmax: IntProperty(name='Max Zoom', default=19, min=0, max=22)
+	grid: EnumProperty(name='Grid', items=_grid_items)
+	description: StringProperty(name='Description', default='')
+
+	def invoke(self, context, event):
+		return context.window_manager.invoke_props_dialog(self, width=420)
+
+	def draw(self, context):
+		layout = self.layout
+		layout.prop(self, 'display_name')
+		layout.prop(self, 'url')
+		row = layout.row()
+		row.prop(self, 'format')
+		row.prop(self, 'grid')
+		row = layout.row()
+		row.prop(self, 'zmin')
+		row.prop(self, 'zmax')
+		layout.prop(self, 'description')
+
+	def execute(self, context):
+		prefs = context.preferences.addons[PKG].preferences
+		key = self.display_name.strip()
+		if not key:
+			self.report({'ERROR'}, "Name must not be empty")
+			return {'CANCELLED'}
+		if not self.url.strip():
+			self.report({'ERROR'}, "URL template must not be empty")
+			return {'CANCELLED'}
+		if self.zmin > self.zmax:
+			self.report({'ERROR'}, "Min Zoom must be <= Max Zoom")
+			return {'CANCELLED'}
+		overrides = providers_mod.get_user_overrides(prefs)
+		if key in overrides and overrides[key].get('is_custom'):
+			self.report({'ERROR'}, "A custom provider named '{}' already exists".format(key))
+			return {'CANCELLED'}
+		overrides[key] = {
+			'is_custom': True,
+			'visible': True,
+			'name': self.display_name,
+			'description': self.description,
+			'url': self.url,
+			'format': self.format,
+			'zmin': self.zmin,
+			'zmax': self.zmax,
+			'grid': self.grid,
+		}
+		providers_mod.set_user_overrides(prefs, overrides)
+		rebuild_providers_collection(prefs)
+		self.report({'INFO'}, "Added provider: {}".format(self.display_name))
+		return {'FINISHED'}
+
+
+class BGIS_OT_edit_provider(Operator):
+	bl_idname = "bgis.edit_provider"
+	bl_description = 'Edit the selected map tile provider'
+	bl_label = "Edit Provider"
+	bl_options = {'INTERNAL'}
+
+	display_name: StringProperty(name='Name')
+	url: StringProperty(name='URL Template')
+	format: EnumProperty(name='Format', items=_format_items, default=0)
+	zmin: IntProperty(name='Min Zoom', default=0, min=0, max=22)
+	zmax: IntProperty(name='Max Zoom', default=19, min=0, max=22)
+	grid: EnumProperty(name='Grid', items=_grid_items)
+	description: StringProperty(name='Description', default='')
+
+	def _selected_row(self, prefs):
+		col = prefs.providers_collection
+		idx = prefs.providers_index
+		if idx < 0 or idx >= len(col):
+			return None
+		return col[idx]
+
+	def invoke(self, context, event):
+		prefs = context.preferences.addons[PKG].preferences
+		row = self._selected_row(prefs)
+		if row is None:
+			self.report({'ERROR'}, "No provider selected")
+			return {'CANCELLED'}
+		entries = {e['key']: e for e in providers_mod.get_catalog(prefs)}
+		entry = entries.get(row.key, {})
+		self.display_name = entry.get('name', row.display_name)
+		self.url = entry.get('url', '')
+		self.format = entry.get('format', 'png')
+		self.zmin = int(entry.get('zmin', 0))
+		self.zmax = int(entry.get('zmax', 19))
+		self.grid = entry.get('grid', 'WM')
+		self.description = entry.get('description', '')
+		return context.window_manager.invoke_props_dialog(self, width=420)
+
+	def draw(self, context):
+		layout = self.layout
+		prefs = context.preferences.addons[PKG].preferences
+		row = self._selected_row(prefs)
+		if row is not None and not row.is_custom:
+			layout.label(text='Editing a built-in provider creates a custom override.', icon='INFO')
+		layout.prop(self, 'display_name')
+		layout.prop(self, 'url')
+		row_l = layout.row()
+		row_l.prop(self, 'format')
+		row_l.prop(self, 'grid')
+		row_l = layout.row()
+		row_l.prop(self, 'zmin')
+		row_l.prop(self, 'zmax')
+		layout.prop(self, 'description')
+
+	def execute(self, context):
+		prefs = context.preferences.addons[PKG].preferences
+		row = self._selected_row(prefs)
+		if row is None:
+			self.report({'ERROR'}, "No provider selected")
+			return {'CANCELLED'}
+		if self.zmin > self.zmax:
+			self.report({'ERROR'}, "Min Zoom must be <= Max Zoom")
+			return {'CANCELLED'}
+		orig_key = row.key
+		was_custom = bool(row.is_custom)
+		overrides = providers_mod.get_user_overrides(prefs)
+		entry = overrides.get(orig_key, {})
+		entry.update({
+			'name': self.display_name,
+			'description': self.description,
+			'format': self.format,
+			'zmin': self.zmin,
+			'zmax': self.zmax,
+			'grid': self.grid,
+		})
+		# Only persist URL if user set one (built-ins keep theirs from servicesDefs)
+		if self.url.strip():
+			entry['url'] = self.url
+			# Editing a built-in URL turns it into a custom override
+			if not was_custom:
+				entry['is_custom'] = True
+		if 'visible' not in entry:
+			entry['visible'] = True
+		if was_custom:
+			entry['is_custom'] = True
+		overrides[orig_key] = entry
+		providers_mod.set_user_overrides(prefs, overrides)
+		rebuild_providers_collection(prefs)
+		return {'FINISHED'}
+
+
+class BGIS_OT_remove_provider(Operator):
+	bl_idname = "bgis.remove_provider"
+	bl_description = 'Remove the selected provider (built-ins are hidden, customs are deleted)'
+	bl_label = "Remove Provider"
+	bl_options = {'INTERNAL'}
+
+	def execute(self, context):
+		prefs = context.preferences.addons[PKG].preferences
+		col = prefs.providers_collection
+		idx = prefs.providers_index
+		if idx < 0 or idx >= len(col):
+			self.report({'WARNING'}, "No provider selected")
+			return {'CANCELLED'}
+		row = col[idx]
+		overrides = providers_mod.get_user_overrides(prefs)
+		if row.is_custom:
+			overrides.pop(row.key, None)
+			msg = "Removed provider: {}".format(row.display_name)
+		else:
+			ov = overrides.get(row.key, {})
+			ov['visible'] = False
+			overrides[row.key] = ov
+			msg = "Hidden built-in: {}".format(row.display_name)
+		providers_mod.set_user_overrides(prefs, overrides)
+		rebuild_providers_collection(prefs)
+		self.report({'INFO'}, msg)
+		return {'FINISHED'}
+
+
+class BGIS_OT_reset_providers(Operator):
+	bl_idname = "bgis.reset_providers"
+	bl_description = 'Discard custom providers and restore default visibility'
+	bl_label = "Reset Providers"
+	bl_options = {'INTERNAL'}
+
+	def execute(self, context):
+		prefs = context.preferences.addons[PKG].preferences
+		providers_mod.set_user_overrides(prefs, {})
+		rebuild_providers_collection(prefs)
+		self.report({'INFO'}, "Provider list reset to defaults")
+		return {'FINISHED'}
+
+
 classes = [
+GIS_PG_provider_row,
+GIS_UL_providers,
 BGIS_OT_pref_show,
 BGIS_PREFS,
 BGIS_OT_add_predef_crs,
@@ -1198,6 +1522,10 @@ BGIS_OT_reset_overpass_server,
 BGIS_OT_edit_overpass_server,
 BGIS_OT_cache_clear_all,
 BGIS_OT_cache_clear_expired,
+BGIS_OT_add_provider,
+BGIS_OT_edit_provider,
+BGIS_OT_remove_provider,
+BGIS_OT_reset_providers,
 ]
 
 def register():
@@ -1223,6 +1551,9 @@ def register():
 	if prefs.cacheFolder == '':
 		prefs.cacheFolder = APP_DATA
 	restore_credentials(prefs)
+	# Sync the provider UIList from the persisted catalog and inject any
+	# user-defined custom providers into SOURCES so MapService can resolve them.
+	rebuild_providers_collection(prefs)
 
 
 def unregister():

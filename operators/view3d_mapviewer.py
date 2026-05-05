@@ -671,18 +671,77 @@ def _estimate_export_tiles(basemap, export_zoom):
 
 ###############
 
+from ..core.basemaps import providers as providers_mod
+
 # Sources whose tile URLs require an addon-prefs API key. We hide them from the
 # N-Panel picker until the matching key field is populated, so users don't pick
 # a provider only to see empty/error tiles.
-_KEYED_SOURCES = {
-	'MAPBOX': ('mapbox_token',),
-	'MAPTILER': ('maptiler_api_key',),
-	'THUNDERFOREST': ('thunderforest_api_key',),
-	'STADIA': ('stadia_api_key',),
-	'CDSE_S2': ('cdse_client_id', 'cdse_client_secret'),
-}
+_KEYED_SOURCES = providers_mod.KEYED_SOURCES
 
 
+def _list_providers(self, context):
+	"""Flat compound-key list (Source.Layer) filtered by:
+	 * provider visibility toggle in the catalog
+	 * keyed providers without configured API keys."""
+	prefs = None
+	try:
+		prefs = context.preferences.addons[PKG].preferences
+	except (KeyError, AttributeError):
+		pass
+	if prefs is None:
+		# Fallback to plain SOURCES expansion if prefs aren't ready yet
+		items = []
+		for srckey, src in SOURCES.items():
+			for laykey, lay in src.get('layers', {}).items():
+				items.append((
+					'{}.{}'.format(srckey, laykey),
+					'{} — {}'.format(src['name'], lay['name']),
+					lay.get('description') or src.get('description', ''),
+				))
+		return items
+	items = []
+	for entry in providers_mod.get_visible_entries(prefs):
+		needs = entry.get('needs_key_attrs', ())
+		if needs and not all(getattr(prefs, a, '') for a in needs):
+			continue
+		items.append((entry['key'], entry['name'], entry.get('description', '')))
+	if not items:
+		# Nothing visible — surface a placeholder so the dropdown isn't blank
+		items.append(('__none__', '(no providers visible — see addon prefs)', ''))
+	return items
+
+
+def _on_provider_changed(self, context):
+	"""When the flat picker changes, split compound key back into srckey/laykey
+	so the rest of the basemap pipeline keeps working unchanged."""
+	if not self.provider or self.provider == '__none__':
+		_on_source_layer_changed(self, context)
+		return
+	try:
+		srckey, laykey = providers_mod.get_compound_routing(self.provider)
+	except Exception:
+		log.debug('Provider routing failed for %r', self.provider, exc_info=True)
+		_on_source_layer_changed(self, context)
+		return
+	# Use attribute assignment so the EnumProperty validates and rebuilds its
+	# index. The src setter recomputes the lay items list, so we must set src
+	# first, then lay.
+	if srckey != self.src:
+		try:
+			self.src = srckey
+		except TypeError:
+			# Item not in current src enum (filtered out); fallback to subscript
+			# which bypasses the items check.
+			self['src'] = srckey
+	if laykey != self.lay:
+		try:
+			self.lay = laykey
+		except TypeError:
+			self['lay'] = laykey
+	_on_source_layer_changed(self, context)
+
+
+# Legacy items callbacks kept for back-compat with the start operator dialog.
 def _list_sources(self, context):
 	prefs = None
 	try:
@@ -697,6 +756,7 @@ def _list_sources(self, context):
 				continue
 		items.append((srckey, src['name'], src['description']))
 	return items
+
 
 def _list_layers(self, context):
 	items = []
@@ -739,15 +799,25 @@ def _on_zoom_input_changed(self, context):
 		_zoom_jump_pending = True
 
 class GIS_PG_basemap_settings(PropertyGroup):
+	# Flat picker — one compound key like 'OSM.MAPNIK' or a custom provider name.
+	provider: EnumProperty(
+		name="Basemap",
+		description="Choose a map tile provider",
+		items=_list_providers,
+		update=_on_provider_changed,
+	)
+	# Internal source / layer split kept for backward compatibility with the
+	# rest of the pipeline (MapService dispatch, modal start args). Hidden in
+	# the N-Panel — the flat 'provider' picker keeps these in sync.
 	src: EnumProperty(
 		name="Source",
-		description="Choose map service source",
+		description="Internal: source key derived from provider",
 		items=_list_sources,
 		update=_on_source_layer_changed
 	)
 	lay: EnumProperty(
 		name="Layer",
-		description="Choose layer",
+		description="Internal: layer key derived from provider",
 		items=_list_layers,
 		update=_on_source_layer_changed
 	)
