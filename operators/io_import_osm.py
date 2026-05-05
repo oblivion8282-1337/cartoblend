@@ -14,7 +14,7 @@ from bpy.props import StringProperty, IntProperty, FloatProperty, BoolProperty, 
 from .lib.osm import overpy
 
 from ..geoscene import GeoScene
-from .utils import adjust3Dview, getBBOX, DropToGround, isTopView
+from .utils import adjust3Dview, getBBOX, DropToGround, isTopView, hasBasemapPlane
 
 from ..core.proj import Reproj, reprojBbox, reprojPt, utm
 from ..core.utils import perf_clock
@@ -1604,7 +1604,17 @@ class IMPORTGIS_OT_osm_query(Operator, OSM_IMPORT):
 
 	@classmethod
 	def poll(cls, context):
-		return context.mode == 'OBJECT'
+		# Require an exported basemap plane (or any selected mesh) so the
+		# query extent is anchored on a textured/georef reference.
+		if getattr(context, 'mode', None) != 'OBJECT':
+			return False
+		scn = getattr(context, 'scene', None)
+		if scn is None:
+			return False
+		if hasBasemapPlane(scn):
+			return True
+		aobj = getattr(context, 'active_object', None)
+		return aobj is not None and aobj.type == 'MESH' and aobj.select_get()
 
 	def invoke(self, context, event):
 		#workaround to enum callback bug (T48873, T38489)

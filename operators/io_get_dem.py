@@ -14,7 +14,7 @@ from bpy.types import Operator, Panel, AddonPreferences
 from bpy.props import StringProperty, IntProperty, FloatProperty, BoolProperty, EnumProperty, FloatVectorProperty
 
 from ..geoscene import GeoScene
-from .utils import adjust3Dview, getBBOX, isTopView
+from .utils import adjust3Dview, getBBOX, isTopView, hasBasemapPlane
 from ..core.proj import SRS, reprojBbox
 
 from ..core import settings
@@ -81,7 +81,17 @@ class IMPORTGIS_OT_dem_query(Operator):
 
 	@classmethod
 	def poll(cls, context):
-		return context.mode == 'OBJECT'
+		# Require an exported basemap plane (or any selected mesh) so the DEM
+		# lands on a textured/georef reference instead of a bare new plane.
+		if getattr(context, 'mode', None) != 'OBJECT':
+			return False
+		scn = getattr(context, 'scene', None)
+		if scn is None:
+			return False
+		if hasBasemapPlane(scn):
+			return True
+		aobj = getattr(context, 'active_object', None)
+		return aobj is not None and aobj.type == 'MESH' and aobj.select_get()
 
 	def execute(self, context):
 

@@ -14,6 +14,10 @@ def isTopView(context):
 		return False
 	return reg3d.view_perspective == 'ORTHO' and tuple(reg3d.view_matrix.to_euler()) == (0,0,0)
 
+def hasBasemapPlane(scene):
+	"""True if the scene contains a basemap export mesh (EXPORT_*)."""
+	return any(o.type == 'MESH' and o.name.startswith('EXPORT_') for o in scene.objects)
+
 def mouseTo3d(context, x, y):
 	'''Convert event.mouse_region to world coordinates'''
 	if context.area is None or context.region_data is None:
