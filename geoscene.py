@@ -166,26 +166,31 @@ class GeoScene():
 		return SK.CRSX in self.scn and SK.CRSY in self.scn
 
 	def setOriginGeo(self, lon, lat):
-		self.lon, self.lat = lon, lat
+		# Reproject first so a failure leaves the scene's existing origin untouched
+		# instead of stranding lon/lat without a matching projected origin.
 		try:
-			self.crsx, self.crsy = reprojPt(4326, self.crs, lon, lat)
-		except Exception as e:
-			if self.hasOriginPrj:
-				self.delOriginPrj()
-				log.warning('Origin proj has been deleted because the property could not be updated', exc_info=True)
+			crsx, crsy = reprojPt(4326, self.crs, lon, lat)
+		except Exception:
+			log.warning('setOriginGeo: reproject failed, scene origin unchanged', exc_info=True)
+			return
+		self.lon, self.lat = lon, lat
+		self.crsx, self.crsy = crsx, crsy
 
 	def setOriginPrj(self, x, y, synch=True):
-		self.crsx, self.crsy = x, y
 		if synch:
+			# Reproject first so failure leaves the existing origin intact.
 			try:
-				self.lon, self.lat = reprojPt(self.crs, 4326, x, y)
-			except Exception as e:
-				if self.hasOriginGeo:
-					self.delOriginGeo()
-					log.warning('Origin geo has been deleted because the property could not be updated', exc_info=True)
-		elif self.hasOriginGeo:
-			self.delOriginGeo()
-			log.warning('Origin geo has been deleted because coordinate synchronization is disable')
+				lon, lat = reprojPt(self.crs, 4326, x, y)
+			except Exception:
+				log.warning('setOriginPrj: reproject failed, scene origin unchanged', exc_info=True)
+				return
+			self.crsx, self.crsy = x, y
+			self.lon, self.lat = lon, lat
+		else:
+			self.crsx, self.crsy = x, y
+			if self.hasOriginGeo:
+				self.delOriginGeo()
+				log.warning('Origin geo has been deleted because coordinate synchronization is disable')
 
 	def updOriginPrj(self, x, y, updObjLoc=True, synch=True, useScale=True):
 		'''Update/move scene origin passing absolute coordinates'''

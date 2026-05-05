@@ -357,8 +357,16 @@ class BaseMap(GeoScene):
 		self.viewDstZ = zdst
 
 	def _place_on_main_thread(self):
-		'''Timer callback to execute place() safely on the main thread'''
-		self.place()
+		'''Timer callback to execute place() safely on the main thread.
+
+		The bpy.app timer can fire after the modal operator has been torn
+		down (addon disabled, scene reset, Blender quit). In that case
+		Blender PyObjects we hold are dangling and any access raises
+		ReferenceError. Drop the callback silently in that case.'''
+		try:
+			self.place()
+		except ReferenceError:
+			log.debug('place() callback dropped: operator torn down', exc_info=True)
 		return None #don't repeat
 
 
