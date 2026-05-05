@@ -1287,31 +1287,31 @@ class GIS_UL_providers(UIList):
 	def draw_item(self, context, layout, data, item, icon, active_data, active_propname, index):
 		row = layout.row(align=True)
 		row.prop(item, 'visible', text='')
-		# Layer name takes a fixed share of the row so key inputs line up.
-		name_col = row.column()
-		name_col.label(text=item.display_name)
-		if item.is_custom:
-			row.label(text='', icon='USER')
 		if not item.needs_key:
+			# Free providers: name takes the whole remaining width.
+			row.label(text=item.display_name)
+			if item.is_custom:
+				row.label(text='', icon='USER')
 			return
-		# Render API-key fields inline so the user can type directly without
-		# having to discover a hidden dialog. All rows of the same keyed
-		# service bind to the same prefs attribute — typing into one updates
-		# the rest the next time Blender redraws.
+		# Keyed providers: split the remaining row width so the input field is
+		# capped at ~40% instead of greedily eating everything to the right.
 		srckey = item.key.split('.', 1)[0]
 		attrs = providers_mod.KEYED_SOURCES.get(srckey, ())
 		try:
 			prefs = context.preferences.addons[PKG].preferences
 		except (KeyError, AttributeError):
+			row.label(text=item.display_name)
 			return
 		configured = all(getattr(prefs, a, '') for a in attrs)
-		key_row = row.row(align=True)
+		split = row.split(factor=0.6, align=True)
+		split.label(text=item.display_name)
+		key_row = split.row(align=True)
 		for attr in attrs:
 			key_row.prop(prefs, attr, text='')
 		if not configured:
 			register_url = _SERVICE_REGISTER_URLS.get(srckey)
 			if register_url:
-				op = row.operator('wm.url_open', icon='URL', text='')
+				op = key_row.operator('wm.url_open', icon='URL', text='')
 				op.url = register_url
 
 
