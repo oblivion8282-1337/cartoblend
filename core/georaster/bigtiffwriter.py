@@ -45,7 +45,7 @@ class BigTiffWriter():
 		self.ds = None
 
 
-	def __init__(self, path, w, h, georef, geoTiffOptions={'TFW':'YES', 'TILED':'YES', 'BIGTIFF':'YES', 'COMPRESS':'JPEG', 'JPEG_QUALITY':80, 'PHOTOMETRIC':'YCBCR'}):
+	def __init__(self, path, w, h, georef, geoTiffOptions=None):
 		'''
 		path = fule system path for the ouput tiff
 		w, h = width and height in pixels
@@ -56,6 +56,8 @@ class BigTiffWriter():
 		if not HAS_GDAL:
 			raise ImportError("GDAL interface unavailable")
 
+		if geoTiffOptions is None:
+			geoTiffOptions = {'TFW':'YES', 'TILED':'YES', 'BIGTIFF':'YES', 'COMPRESS':'JPEG', 'JPEG_QUALITY':80, 'PHOTOMETRIC':'YCBCR'}
 
 		#control path validity
 

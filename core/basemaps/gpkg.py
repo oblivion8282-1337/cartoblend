@@ -46,6 +46,7 @@ class GeoPackage():
 			prefs = bpy.context.preferences.addons['bl_ext.user_default.cartoblend'].preferences
 			return prefs.cacheExpiry
 		except Exception:
+			log.debug('cacheExpiry pref unavailable, using default', exc_info=True)
 			return GeoPackage.MAX_DAYS
 
 	def __init__(self, path, tm):
@@ -83,6 +84,7 @@ class GeoPackage():
 			try:
 				conn.execute("SELECT 1")
 			except Exception:
+				log.debug('Stale GPKG connection, reconnecting', exc_info=True)
 				conn = None
 				setattr(self._local, attr, None)
 		if conn is None:
@@ -100,7 +102,7 @@ class GeoPackage():
 				try:
 					conn.close()
 				except Exception:
-					pass
+					log.debug('Error closing GPKG connection', exc_info=True)
 				setattr(self._local, attr, None)
 
 	def close_all(self):
@@ -110,7 +112,7 @@ class GeoPackage():
 				try:
 					conn.close()
 				except Exception:
-					pass
+					log.debug('Error closing GPKG connection', exc_info=True)
 			self._all_connections.clear()
 
 

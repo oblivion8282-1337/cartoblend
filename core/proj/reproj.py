@@ -58,7 +58,7 @@ def lonLatToWebMerc(lon, lat):
 ######################################
 # Raster reproj using GDAL
 
-def reprojImg(crs1, crs2, ds1, out_ul=None, out_size=None, out_res=None, sqPx=False, resamplAlg='BL', path=None, geoTiffOptions={'TFW':'YES', 'TILED':'YES', 'BIGTIFF':'YES', 'COMPRESS':'JPEG', 'JPEG_QUALITY':80, 'PHOTOMETRIC':'YCBCR'}):
+def reprojImg(crs1, crs2, ds1, out_ul=None, out_size=None, out_res=None, sqPx=False, resamplAlg='BL', path=None, geoTiffOptions=None):
 	'''
 	Use GDAL Python binding to reproject an image
 	crs1, crs2 >> epsg code
@@ -74,6 +74,9 @@ def reprojImg(crs1, crs2, ds1, out_ul=None, out_size=None, out_res=None, sqPx=Fa
 
 	if not HAS_GDAL:
 		raise NotImplementedError
+
+	if geoTiffOptions is None:
+		geoTiffOptions = {'TFW':'YES', 'TILED':'YES', 'BIGTIFF':'YES', 'COMPRESS':'JPEG', 'JPEG_QUALITY':80, 'PHOTOMETRIC':'YCBCR'}
 
 	geoTrans = ds1.GetGeoTransform()
 	if geoTrans is not None:
@@ -322,14 +325,34 @@ class Reproj():
 
 
 
+# Small cache of recently-used Reproj instances. Hashable key over (crs1, crs2)
+# avoids paying the expensive Transformer/SRS init when reprojecting many tiles
+# or bboxes between the same CRS pair.
+_REPROJ_CACHE = {}
+_REPROJ_CACHE_MAX = 16
+
+def _get_reproj(crs1, crs2):
+	try:
+		key = (crs1, crs2)
+		hash(key)
+	except TypeError:
+		# Non-hashable crs (e.g. raw proj4 dict): skip caching.
+		return Reproj(crs1, crs2)
+	rprj = _REPROJ_CACHE.get(key)
+	if rprj is None:
+		rprj = Reproj(crs1, crs2)
+		if len(_REPROJ_CACHE) >= _REPROJ_CACHE_MAX:
+			_REPROJ_CACHE.pop(next(iter(_REPROJ_CACHE)))
+		_REPROJ_CACHE[key] = rprj
+	return rprj
+
+
 def reprojPt(crs1, crs2, x, y):
 	"""
 	Reproject x1,y1 coords from crs1 to crs2
 	crs can be an EPSG code (interger or string) or a proj4 string
-	WARN : do not use this function in a loop because Reproj() init is slow
 	"""
-	rprj = Reproj(crs1, crs2)
-	return rprj.pt(x, y)
+	return _get_reproj(crs1, crs2).pt(x, y)
 
 
 def reprojPts(crs1, crs2, pts):
@@ -337,11 +360,8 @@ def reprojPts(crs1, crs2, pts):
 	Reproject [pts] from crs1 to crs2
 	crs can be an EPSG code (integer or srid string) or a proj4 string
 	pts must be [(x,y)]
-	WARN : do not use this function in a loop because Reproj() init is slow
 	"""
-	rprj = Reproj(crs1, crs2)
-	return rprj.pts(pts)
+	return _get_reproj(crs1, crs2).pts(pts)
 
 def reprojBbox(crs1, crs2, bbox):
-	rprj = Reproj(crs1, crs2)
-	return rprj.bbox(bbox)
+	return _get_reproj(crs1, crs2).bbox(bbox)

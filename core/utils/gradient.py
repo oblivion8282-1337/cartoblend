@@ -237,6 +237,20 @@ class Gradient():
 
 	def __readSVG(self, svg):
 		try:
+			# Block billion-laughs / entity-expansion DoS by refusing files with a DTD.
+			if hasattr(svg, 'read'):
+				head = svg.read(8192)
+				try:
+					svg.seek(0)
+				except (OSError, AttributeError):
+					pass
+			else:
+				with open(svg, 'rb') as fh:
+					head = fh.read(8192)
+			lowered = head.lower() if isinstance(head, bytes) else head.encode('utf-8', 'ignore').lower()
+			if b'<!doctype' in lowered or b'<!entity' in lowered:
+				log.error("SVG contains a DOCTYPE/ENTITY declaration; refused for safety")
+				return False
 			domData = parse(svg)
 		except Exception as e:
 			log.error("Cannot parse svg file : {}".format(e))
@@ -473,8 +487,7 @@ class Gradient():
 		reparsed = parseString(xmlstr)
 		xmlstr = reparsed.toprettyxml()
 		# write to file
-		f = open(svgPath,"w")
-		f.write(xmlstr)
-		f.close()
+		with open(svgPath, "w", encoding="utf-8") as f:
+			f.write(xmlstr)
 
 		return

@@ -70,7 +70,12 @@ def getAppData():
 	home = os.path.expanduser('~')
 	loc = os.path.join(home, '.bgis')
 	if not os.path.exists(loc):
-		os.mkdir(loc)
+		os.mkdir(loc, mode=0o700)
+	else:
+		try:
+			os.chmod(loc, 0o700)
+		except OSError:
+			pass
 	return loc
 
 APP_DATA = getAppData()
@@ -132,11 +137,6 @@ threading.Thread.__init__ = init
 
 ####
 
-
-import ssl
-if (not os.environ.get('PYTHONHTTPSVERIFY', '') and
-	getattr(ssl, '_create_unverified_context', None)):
-	ssl._create_default_https_context = ssl._create_unverified_context
 
 #from .core.checkdeps import HAS_GDAL, HAS_PYPROJ, HAS_PIL, HAS_IMGIO
 from .core.settings import settings

@@ -853,11 +853,13 @@ def _apply_terrain_snap(obj, terrain_obj):
 
 def joinBmesh(src_bm, dest_bm):
 	'''Join src_bm into dest_bm using direct bmesh vertex/face/edge copying.'''
-	# Map old verts to new verts
-	vert_map = {}
+	# Build vert_map as a list indexed by src vertex index — list lookup is faster
+	# than dict lookup in the per-face inner loop on large OSM imports.
+	src_bm.verts.ensure_lookup_table()
+	vert_map = [None] * len(src_bm.verts)
+	verts_new = dest_bm.verts.new
 	for v in src_bm.verts:
-		new_v = dest_bm.verts.new(v.co)
-		vert_map[v.index] = new_v
+		vert_map[v.index] = verts_new(v.co)
 	dest_bm.verts.ensure_lookup_table()
 	# Build face layer mapping (float and int layers)
 	face_float_map = []
@@ -870,10 +872,11 @@ def joinBmesh(src_bm, dest_bm):
 		dst_layer = dest_bm.faces.layers.int.get(src_layer.name)
 		if dst_layer is not None:
 			face_int_map.append((src_layer, dst_layer))
+	faces_new = dest_bm.faces.new
 	# Copy faces (edges are created implicitly)
 	for f in src_bm.faces:
 		try:
-			new_face = dest_bm.faces.new([vert_map[v.index] for v in f.verts])
+			new_face = faces_new([vert_map[v.index] for v in f.verts])
 			new_face.material_index = f.material_index
 			for src_layer, dst_layer in face_float_map:
 				new_face[dst_layer] = f[src_layer]
@@ -882,10 +885,11 @@ def joinBmesh(src_bm, dest_bm):
 		except ValueError:
 			pass  # duplicate face
 	# Copy edges that aren't part of faces
+	edges_new = dest_bm.edges.new
 	for e in src_bm.edges:
 		if not e.link_faces:
 			try:
-				dest_bm.edges.new([vert_map[v.index] for v in e.verts])
+				edges_new([vert_map[v.index] for v in e.verts])
 			except ValueError:
 				pass
 
@@ -1480,6 +1484,16 @@ class IMPORTGIS_OT_osm_file(Operator, OSM_IMPORT):
 		#Parse file
 		t0 = perf_clock()
 		api = overpy.Overpass()
+		# Block billion-laughs / entity-expansion DoS by refusing files with a DTD.
+		try:
+			with open(self.filepath, 'rb') as fh:
+				head = fh.read(8192).lower()
+			if b'<!doctype' in head or b'<!entity' in head:
+				self.report({'ERROR'}, "OSM file contains a DOCTYPE/ENTITY declaration; refused for safety")
+				return {'CANCELLED'}
+		except OSError as e:
+			self.report({'ERROR'}, "Cannot read OSM file: {}".format(e))
+			return {'CANCELLED'}
 		#with open(self.filepath, "r", encoding"utf-8") as f:
 		#	result = api.parse_xml(f.read()) #WARNING read() load all the file into memory
 		result = api.parse_xml(self.filepath)

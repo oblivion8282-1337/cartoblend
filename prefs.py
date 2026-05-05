@@ -20,7 +20,12 @@ def getAppData():
 	home = os.path.expanduser('~')
 	loc = os.path.join(home, '.bgis')
 	if not os.path.exists(loc):
-		os.mkdir(loc)
+		os.mkdir(loc, mode=0o700)
+	else:
+		try:
+			os.chmod(loc, 0o700)
+		except OSError:
+			pass
 	return loc
 
 APP_DATA = getAppData()
@@ -54,10 +59,16 @@ def _load_credentials():
 		return {}
 
 def _save_credentials(data):
-	"""Save credentials dict to ~/.bgis/credentials.json."""
+	"""Save credentials dict to ~/.bgis/credentials.json with owner-only permissions."""
 	try:
-		with open(CREDENTIALS_FILE, 'w', encoding='utf-8') as f:
+		flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
+		fd = os.open(CREDENTIALS_FILE, flags, 0o600)
+		with os.fdopen(fd, 'w', encoding='utf-8') as f:
 			json.dump(data, f, indent=2)
+		try:
+			os.chmod(CREDENTIALS_FILE, 0o600)
+		except OSError:
+			pass
 	except Exception:
 		log.error('Failed to save credentials file', exc_info=True)
 

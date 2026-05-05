@@ -106,7 +106,7 @@ class GeoScene():
 			if max is not None:
 				ui.update(max=max)
 		except Exception:
-			pass
+			log.debug('id_properties_ui update failed for %s', key, exc_info=True)
 
 	def view3dToProj(self, dx, dy):
 		'''Convert view3d coords to crs coords'''

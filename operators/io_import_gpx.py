@@ -38,6 +38,15 @@ def _detect_ns(root):
 	return ''
 
 
+def _reject_doctype(filepath):
+	# Block billion-laughs / entity-expansion DoS by refusing files with a DTD.
+	with open(filepath, 'rb') as fh:
+		head = fh.read(8192)
+	lowered = head.lower()
+	if b'<!doctype' in lowered or b'<!entity' in lowered:
+		raise ValueError("XML file contains a DOCTYPE/ENTITY declaration; refused for safety")
+
+
 def _parse_gpx(filepath):
 	"""Parse a GPX file and return structured data.
 
@@ -46,6 +55,7 @@ def _parse_gpx(filepath):
 	  'routes':    [{'name': str, 'points': [(lon, lat, ele), ...]}, ...]
 	  'tracks':    [{'name': str, 'segments': [[(lon, lat, ele), ...], ...]}, ...]
 	"""
+	_reject_doctype(filepath)
 	tree = ET.parse(filepath)
 	root = tree.getroot()
 	ns = _detect_ns(root)

@@ -619,15 +619,25 @@ def _clamp_export_zoom(basemap, detail_offset):
 	return z
 
 
+_estimate_cache = {'key': None, 'value': 0}
+
 def _estimate_export_tiles(basemap, export_zoom):
-	"""Estimate how many tiles would be needed for export at the given zoom."""
+	"""Estimate how many tiles would be needed for export at the given zoom.
+
+	Cached on (zoom, view_location, area_size, scale, export_zoom, crs, layer)
+	so the per-frame draw handler doesn't recompute when nothing changed.
+	"""
 	try:
 		w, h = basemap.area.width, basemap.area.height
+		loc = basemap.reg3d.view_location
+		key = (basemap.zoom, tuple(loc), w, h, basemap.scale, export_zoom,
+			basemap.crs, basemap.tm.CRS)
+		if _estimate_cache['key'] == key:
+			return _estimate_cache['value']
 		z = basemap.zoom
 		res = basemap.tm.getRes(z)
 		if basemap.crs == 'EPSG:4326':
 			res = meters2dd(res)
-		loc = basemap.reg3d.view_location
 		dx, dy, dz = loc
 		ox = basemap.crsx + (dx * basemap.scale)
 		oy = basemap.crsy + (dy * basemap.scale)
@@ -643,7 +653,10 @@ def _estimate_export_tiles(basemap, export_zoom):
 		bxmin, bymin, bxmax, bymax = bbox
 		cols = math.ceil((bxmax - bxmin) / (tile_size * export_res))
 		rows = math.ceil((bymax - bymin) / (tile_size * export_res))
-		return max(0, cols) * max(0, rows)
+		value = max(0, cols) * max(0, rows)
+		_estimate_cache['key'] = key
+		_estimate_cache['value'] = value
+		return value
 	except Exception:
 		return 0
 
@@ -994,7 +1007,9 @@ class VIEW3D_OT_map_viewer(Operator):
 
 		#Add modal handler and init a timer
 		context.window_manager.modal_handler_add(self)
-		self.timer = context.window_manager.event_timer_add(0.04, window=context.window)
+		# 0.1s = 10 Hz — fast enough for progress text and N-Panel button responsiveness,
+		# 2.5× cheaper than the previous 0.04s (25 Hz) idle load.
+		self.timer = context.window_manager.event_timer_add(0.1, window=context.window)
 
 		#Switch to top view ortho (center to origin)
 		view3d = context.area.spaces.active
@@ -1180,7 +1195,8 @@ class VIEW3D_OT_map_viewer(Operator):
 					_zoom_syncing = True
 					context.scene.gis_basemap.map_zoom = self.map.zoom
 					_zoom_syncing = False
-			except Exception:
+			except (AttributeError, KeyError, ReferenceError):
+				log.debug('Zoom sync skipped (gis_basemap unavailable)', exc_info=True)
 				_zoom_syncing = False
 			#Check if N-Panel "Go" button requested a location change
 			if _goto_pending:

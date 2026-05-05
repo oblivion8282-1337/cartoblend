@@ -159,7 +159,7 @@ class TWCC():
 	@staticmethod
 	def reprojPt(epsg1, epsg2, x1, y1):
 
-		url = f"http://twcc.fr/en/ws/?fmt=json&x={x1}&y={y1}&in=EPSG:{epsg1}&out=EPSG:{epsg2}"
+		url = f"https://twcc.fr/en/ws/?fmt=json&x={x1}&y={y1}&in=EPSG:{epsg1}&out=EPSG:{epsg2}"
 
 		rq = Request(url, headers={'User-Agent': USER_AGENT})
 		response = urlopen(rq, timeout=REPROJ_TIMEOUT).read().decode('utf8')

@@ -7,7 +7,7 @@
 # - Voronoi Diagram Sweepline algorithm and C code by Steven Fortune, 1987, http://ect.bell-labs.com/who/sjf/
 # - Python translation to file voronoi.py by Bill Simons, 2005, http://www.oxfish.com/
 # - Additional changes for QGIS by Carson Farmer added November 2010
-# - 2012 Ported to Python 3 and additional clip functions by domlysz at gmail.com
+# - 2012 Ported to Python 3 and additional clip functions by domlysz
 #
 # Calculate Delaunay triangulation or the Voronoi polygons for a set of
 # 2D input points.

@@ -1,6 +1,5 @@
 """
 kmeans1D.py
-Author : domlysz@gmail.com
 Date : february 2016
 License : GPL
 

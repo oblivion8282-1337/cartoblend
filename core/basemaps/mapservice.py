@@ -509,7 +509,7 @@ class _ConnectionPool():
 				if resp.status == 200:
 					return data
 				else:
-					log.debug("HTTP {} for {}".format(resp.status, url))
+					log.debug("HTTP %s for %s", resp.status, url)
 					return None
 			except (http.client.RemoteDisconnected,
 					http.client.CannotSendRequest,
@@ -521,7 +521,7 @@ class _ConnectionPool():
 					OSError) as e:
 				if attempt == 0:
 					# Connection was dropped by the server; reconnect and retry
-					log.debug("Connection lost ({}), reconnecting to {}".format(e, host))
+					log.debug("Connection lost (%s), reconnecting to %s", e, host)
 					try:
 						conn.close()
 					except Exception:
@@ -841,7 +841,7 @@ class MapService():
 				data = None
 
 		if data is None:
-			log.debug("Invalid tile data for request {}".format(url))
+			log.debug("Invalid tile data for request %s", url)
 
 		return data
 
@@ -915,7 +915,7 @@ class MapService():
 			if data and imghdr.what(None, data) is not None:
 				return data
 			else:
-				log.debug("CDSE returned non-image data for tile z{} x{} y{}".format(zoom, col, row))
+				log.debug("CDSE returned non-image data for tile z%s x%s y%s", zoom, col, row)
 				return None
 
 		except urllib.error.HTTPError as e:
