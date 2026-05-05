@@ -1925,7 +1925,10 @@ class VIEW3D_OT_map_goto(bpy.types.Operator):
 			#init work happens (CRS check, _last_map_src tracking, view_distance
 			#derived from zoom). map_start.invoke with dialog='MAP' reads
 			#source/layer from the N-panel and goes straight to execute().
-			bpy.ops.view3d.map_start('INVOKE_DEFAULT', dialog='MAP')
+			# recenter=False: we just set the origin/zoom for the searched
+			# location and don't want map_viewer to override them with the
+			# scene-bbox center (e.g. the default cube at the world origin).
+			bpy.ops.view3d.map_start('INVOKE_DEFAULT', dialog='MAP', recenter=False)
 
 		return {'FINISHED'}
 
