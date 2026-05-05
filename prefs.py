@@ -519,59 +519,8 @@ class BGIS_PREFS(AddonPreferences):
 		default = False
 		)
 
-	################
-	# Provider registration URLs (used by the "Get free key" buttons)
-	_REGISTER_URLS = {
-		'mapbox_token': 'https://account.mapbox.com/auth/signup/',
-		'maptiler_api_key': 'https://www.maptiler.com/cloud/account/keys/',
-		'thunderforest_api_key': 'https://www.thunderforest.com/pricing/',
-		'stadia_api_key': 'https://client.stadiamaps.com/signup/',
-		'cdse_client_id': 'https://dataspace.copernicus.eu/',
-		'opentopography_api_key': 'https://portal.opentopography.org/myopentopo',
-	}
-
-	def _draw_provider_row(self, layout, label, attr, register_url=None, secondary_attr=None):
-		"""One key row with status icon, label, password field, and a register link."""
-		row = layout.row(align=True)
-		configured = bool(getattr(self, attr, ''))
-		if secondary_attr is not None:
-			configured = configured and bool(getattr(self, secondary_attr, ''))
-		row.label(text='', icon='CHECKMARK' if configured else 'X')
-		row.label(text=label)
-		if secondary_attr is None:
-			row.prop(self, attr, text='')
-		else:
-			sub = row.row(align=True)
-			sub.prop(self, attr, text='')
-			sub.prop(self, secondary_attr, text='')
-		if register_url:
-			op = row.operator("wm.url_open", icon='URL', text='')
-			op.url = register_url
-
 	def draw(self, context):
 		layout = self.layout
-
-		# ── Map Tile Providers ────────────────────────────────────────────────
-		# This is the #1 reason users open the prefs panel: enter an API key to
-		# unlock more basemaps. Keep it compact, status-driven, with a one-click
-		# register button that opens the provider's signup page.
-		box = layout.box()
-		header = box.row()
-		header.label(text='Map Tile Providers', icon='WORLD_DATA')
-		header.label(text='18 providers free without a key — add a key to unlock more')
-		self._draw_provider_row(box, 'Mapbox', 'mapbox_token',
-			register_url=self._REGISTER_URLS['mapbox_token'])
-		self._draw_provider_row(box, 'MapTiler', 'maptiler_api_key',
-			register_url=self._REGISTER_URLS['maptiler_api_key'])
-		self._draw_provider_row(box, 'Thunderforest', 'thunderforest_api_key',
-			register_url=self._REGISTER_URLS['thunderforest_api_key'])
-		self._draw_provider_row(box, 'Stadia Maps', 'stadia_api_key',
-			register_url=self._REGISTER_URLS['stadia_api_key'])
-		self._draw_provider_row(box, 'Copernicus CDSE', 'cdse_client_id',
-			register_url=self._REGISTER_URLS['cdse_client_id'],
-			secondary_attr='cdse_client_secret')
-		self._draw_provider_row(box, 'OpenTopography (DEM)', 'opentopography_api_key',
-			register_url=self._REGISTER_URLS['opentopography_api_key'])
 
 		# ── Basemap Catalog ───────────────────────────────────────────────────
 		# One UIList of all providers. Tick a row to make it appear in the
@@ -667,6 +616,15 @@ class BGIS_PREFS(AddonPreferences):
 		row.operator("bgis.edit_dem_server", icon='PREFERENCES')
 		row.operator("bgis.rmv_dem_server", icon='REMOVE')
 		row.operator("bgis.reset_dem_server", icon='PLAY_REVERSE')
+		# OpenTopography is a DEM service (not a tile provider); its key lives
+		# next to the DEM picker rather than in the basemap catalog.
+		row = sub.row(align=True)
+		configured = bool(self.opentopography_api_key)
+		row.label(text='', icon='CHECKMARK' if configured else 'X')
+		row.label(text='OpenTopography Key')
+		row.prop(self, 'opentopography_api_key', text='')
+		op = row.operator('wm.url_open', icon='URL', text='')
+		op.url = 'https://portal.opentopography.org/myopentopo'
 
 		# OSM tag list + Import/Export options
 		sub = box.box()
@@ -1317,15 +1275,28 @@ class GIS_UL_providers(UIList):
 	def draw_item(self, context, layout, data, item, icon, active_data, active_propname, index):
 		row = layout.row(align=True)
 		row.prop(item, 'visible', text='')
-		# Greyed out if a key is required but not yet configured
-		sub = row.row()
 		if item.needs_key:
-			sub.label(text='', icon='LOCKED')
+			# Show a clickable lock icon when the API key is missing. Clicking
+			# opens an inline dialog where the user enters it. Once configured
+			# the lock turns into a quiet checkmark.
+			srckey = item.key.split('.', 1)[0]
+			info = providers_mod.KEYED_SOURCES.get(srckey, ())
+			try:
+				prefs = context.preferences.addons[PKG].preferences
+				configured = all(getattr(prefs, a, '') for a in info)
+			except (KeyError, AttributeError):
+				configured = False
+			if configured:
+				row.label(text='', icon='UNLOCKED')
+			else:
+				op = row.operator('bgis.unlock_provider',
+					text='', icon='LOCKED', emboss=False)
+				op.srckey = srckey
 		else:
-			sub.label(text='', icon='CHECKMARK' if item.visible else 'BLANK1')
-		sub.label(text=item.display_name)
+			row.label(text='', icon='CHECKMARK' if item.visible else 'BLANK1')
+		row.label(text=item.display_name)
 		if item.is_custom:
-			sub.label(text='custom', icon='USER')
+			row.label(text='', icon='USER')
 
 
 def _format_items(self, context):
@@ -1571,6 +1542,82 @@ class BGIS_OT_remove_provider(Operator):
 		return {'FINISHED'}
 
 
+# Service-level metadata used by the inline unlock dialog. One row per
+# keyed source family in providers_mod.KEYED_SOURCES.
+_UNLOCK_SERVICES = {
+	'MAPBOX': {
+		'title': 'Unlock Mapbox',
+		'desc': '8 layers — register free for 200k tile requests/month',
+		'register_url': 'https://account.mapbox.com/auth/signup/',
+		'fields': [('mapbox_token', 'Access Token')],
+	},
+	'MAPTILER': {
+		'title': 'Unlock MapTiler',
+		'desc': '13 layers — free tier 100k map loads/month',
+		'register_url': 'https://www.maptiler.com/cloud/account/keys/',
+		'fields': [('maptiler_api_key', 'API Key')],
+	},
+	'THUNDERFOREST': {
+		'title': 'Unlock Thunderforest',
+		'desc': '10 layers — free hobby plan',
+		'register_url': 'https://www.thunderforest.com/pricing/',
+		'fields': [('thunderforest_api_key', 'API Key')],
+	},
+	'STADIA': {
+		'title': 'Unlock Stadia Maps',
+		'desc': '15 layers — free tier 200k credits/month',
+		'register_url': 'https://client.stadiamaps.com/signup/',
+		'fields': [('stadia_api_key', 'API Key')],
+	},
+	'CDSE_S2': {
+		'title': 'Unlock Copernicus Sentinel-2',
+		'desc': 'Sentinel-2 satellite imagery, free for commercial use',
+		'register_url': 'https://dataspace.copernicus.eu/',
+		'fields': [
+			('cdse_client_id', 'Client ID'),
+			('cdse_client_secret', 'Client Secret'),
+		],
+	},
+}
+
+
+class BGIS_OT_unlock_provider(Operator):
+	bl_idname = "bgis.unlock_provider"
+	bl_description = 'Enter the API key required by this provider'
+	bl_label = "Unlock Provider"
+	bl_options = {'INTERNAL'}
+
+	srckey: StringProperty()
+
+	def invoke(self, context, event):
+		if self.srckey not in _UNLOCK_SERVICES:
+			self.report({'ERROR'}, "Unknown service: {}".format(self.srckey))
+			return {'CANCELLED'}
+		return context.window_manager.invoke_props_dialog(self, width=440)
+
+	def draw(self, context):
+		layout = self.layout
+		prefs = context.preferences.addons[PKG].preferences
+		info = _UNLOCK_SERVICES[self.srckey]
+		layout.label(text=info['title'])
+		layout.label(text=info['desc'], icon='INFO')
+		layout.separator()
+		for attr, label in info['fields']:
+			row = layout.row()
+			row.label(text=label)
+			row.prop(prefs, attr, text='')
+		layout.separator()
+		op = layout.operator("wm.url_open", icon='URL', text='Open registration page')
+		op.url = info['register_url']
+
+	def execute(self, context):
+		# Values are written live via layout.prop(prefs, attr); just refresh the
+		# UIList so the lock icon disappears for newly-configured services.
+		prefs = context.preferences.addons[PKG].preferences
+		rebuild_providers_collection(prefs)
+		return {'FINISHED'}
+
+
 class BGIS_OT_import_xyz_catalog(Operator):
 	bl_idname = "bgis.import_xyz_catalog"
 	bl_description = ('Fetch the leaflet-providers / xyzservices catalog '
@@ -1636,6 +1683,7 @@ BGIS_OT_edit_provider,
 BGIS_OT_remove_provider,
 BGIS_OT_reset_providers,
 BGIS_OT_import_xyz_catalog,
+BGIS_OT_unlock_provider,
 ]
 
 def register():
