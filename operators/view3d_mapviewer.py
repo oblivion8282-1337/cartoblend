@@ -700,22 +700,37 @@ _KEYED_SOURCES = providers_mod.KEYED_SOURCES
 
 
 # Module-level item caches keep the tuples (and their inner strings) alive
-# across EnumProperty reads. Blender's C side stores a raw pointer rather than
-# taking a reference, so without this the GC reclaims the strings and the
-# dropdown ends up displaying garbled bytes. See T48873.
-_PROVIDER_ITEMS_CACHE = []
-_SOURCE_ITEMS_CACHE = []
-_LAYER_ITEMS_CACHE = []
-_OPSTART_SRC_CACHE = []
-_OPSTART_GRID_CACHE = []
-_OPSTART_LAY_CACHE = []
+# across EnumProperty reads. Blender's C side stores raw pointers into the
+# returned strings without taking a reference, so simply overwriting the
+# cache on the next call leaves stale pointers pointing at freed memory and
+# the dropdown shows garbage characters. See https://developer.blender.org/T48873
+#
+# The robust workaround used by the Blender community is to keep *every*
+# previously-returned items list alive until the addon unloads. We dedupe by
+# the items tuple so a stable selection doesn't grow the cache on every poll.
+_PROVIDER_ITEMS_CACHE = {}
+_SOURCE_ITEMS_CACHE = {}
+_LAYER_ITEMS_CACHE = {}
+_OPSTART_SRC_CACHE = {}
+_OPSTART_GRID_CACHE = {}
+_OPSTART_LAY_CACHE = {}
+
+
+def _hold(cache, items):
+	"""Return a stable list reference for the given items, retaining it in
+	the module-level cache so Blender's pointer into the strings stays valid."""
+	key = tuple(items)
+	cached = cache.get(key)
+	if cached is None:
+		cache[key] = items
+		return items
+	return cached
 
 
 def _list_providers(self, context):
 	"""Flat compound-key list (Source.Layer) filtered by:
 	 * provider visibility toggle in the catalog
 	 * keyed providers without configured API keys."""
-	global _PROVIDER_ITEMS_CACHE
 	prefs = None
 	try:
 		prefs = context.preferences.addons[PKG].preferences
@@ -731,8 +746,7 @@ def _list_providers(self, context):
 					'{} — {}'.format(src['name'], lay['name']),
 					lay.get('description') or src.get('description', ''),
 				))
-		_PROVIDER_ITEMS_CACHE = items
-		return items
+		return _hold(_PROVIDER_ITEMS_CACHE, items)
 	items = []
 	for entry in providers_mod.get_visible_entries(prefs):
 		needs = entry.get('needs_key_attrs', ())
@@ -742,8 +756,7 @@ def _list_providers(self, context):
 	if not items:
 		# Nothing visible — surface a placeholder so the dropdown isn't blank
 		items.append(('__none__', '(no providers visible — see addon prefs)', ''))
-	_PROVIDER_ITEMS_CACHE = items
-	return items
+	return _hold(_PROVIDER_ITEMS_CACHE, items)
 
 
 def _on_provider_changed(self, context):
@@ -778,7 +791,6 @@ def _on_provider_changed(self, context):
 
 # Legacy items callbacks kept for back-compat with the start operator dialog.
 def _list_sources(self, context):
-	global _SOURCE_ITEMS_CACHE
 	prefs = None
 	try:
 		prefs = context.preferences.addons[PKG].preferences
@@ -791,19 +803,16 @@ def _list_sources(self, context):
 			if not all(getattr(prefs, attr, '') for attr in required):
 				continue
 		items.append((srckey, src['name'], src['description']))
-	_SOURCE_ITEMS_CACHE = items
-	return items
+	return _hold(_SOURCE_ITEMS_CACHE, items)
 
 
 def _list_layers(self, context):
-	global _LAYER_ITEMS_CACHE
 	items = []
 	srckey = self.src
 	if srckey in SOURCES:
 		for laykey, lay in SOURCES[srckey]['layers'].items():
 			items.append((laykey, lay['name'], lay['description']))
-	_LAYER_ITEMS_CACHE = items
-	return items
+	return _hold(_LAYER_ITEMS_CACHE, items)
 
 def _on_source_layer_changed(self, context):
 	global _source_change_pending, _zoom_syncing
@@ -888,7 +897,6 @@ class VIEW3D_OT_map_start(Operator):
 	def listSources(self, context):
 		# Same key-aware filter as the N-Panel dropdown: hide providers whose
 		# API key isn't configured.
-		global _OPSTART_SRC_CACHE
 		prefs = None
 		try:
 			prefs = context.preferences.addons[PKG].preferences
@@ -901,11 +909,9 @@ class VIEW3D_OT_map_start(Operator):
 				if not all(getattr(prefs, attr, '') for attr in required):
 					continue
 			srcItems.append( (srckey, src['name'], src['description']) )
-		_OPSTART_SRC_CACHE = srcItems
-		return srcItems
+		return _hold(_OPSTART_SRC_CACHE, srcItems)
 
 	def listGrids(self, context):
-		global _OPSTART_GRID_CACHE
 		grdItems = []
 		src = SOURCES[self.src]
 		for gridkey, grd in GRIDS.items():
@@ -915,18 +921,15 @@ class VIEW3D_OT_map_start(Operator):
 				grdItems.insert(0, (gridkey, grd['name']+' (source)', grd['description']) )
 			else:
 				grdItems.append( (gridkey, grd['name'], grd['description']) )
-		_OPSTART_GRID_CACHE = grdItems
-		return grdItems
+		return _hold(_OPSTART_GRID_CACHE, grdItems)
 
 	def listLayers(self, context):
-		global _OPSTART_LAY_CACHE
 		layItems = []
 		src = SOURCES[self.src]
 		for laykey, lay in src['layers'].items():
 			#put each item in a tuple (key, label, tooltip)
 			layItems.append( (laykey, lay['name'], lay['description']) )
-		_OPSTART_LAY_CACHE = layItems
-		return layItems
+		return _hold(_OPSTART_LAY_CACHE, layItems)
 
 
 	src: EnumProperty(
