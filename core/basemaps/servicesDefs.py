@@ -519,40 +519,6 @@ SOURCES = {
 	},
 
 
-	###############
-	# WMS examples
-	###############
-
-	#with WMS you can set source grid as you want, the only condition is that the grid
-	#crs must match one on crs provided by WMS
-
-
-	"OSM_WMS" : {
-		"name" : 'OSM WMS',
-		"description" : 'Open Street Map WMS',
-		"service": 'WMS',
-		"grid": 'WM',
-		"layers" : {
-			"WRLD" : {"urlKey" : 'osm_auto:all', "name" : 'WMS', "description" : '', "format" : 'png', "style" : '', "zmin" : 0, "zmax" : 20}
-		},
-		"urlTemplate": {
-			"BASE_URL" : 'http://maps.heigit.org/osm-wms/service?',
-			"SERVICE" : 'WMS',
-			"VERSION" : '1.1.1',
-			"REQUEST" : 'GetMap',
-			"SRS" : '{CRS}', #EPSG:xxxx
-			"LAYERS" : '{LAY}',
-			"FORMAT" : 'image/{FORMAT}',
-			"STYLES" : '{STYLE}',
-			"BBOX" : '{BBOX}', #xmin,ymin,xmax,ymax, in "SRS" projection
-			"WIDTH" : '{WIDTH}',
-			"HEIGHT" : '{HEIGHT}',
-			"TRANSPARENT" : "False"
-			},
-		"referer": "http://www.osm-wms.de/"
-	},
-
-
 	"GEOPORTAIL" : {
 		"name" : 'Geoportail',
 		"description" : 'Geoportail.fr',
@@ -588,8 +554,6 @@ SOURCES = {
 		"grid": 'WM',
 		"matrix" : 'PM',
 		"layers" : {
-			"SCAN25" : {"urlKey" : 'GEOGRAPHICALGRIDSYSTEMS.MAPS.SCAN25TOUR', "name" : 'Scan25', "description" : '',
-				"format" : 'jpeg', "style" : 'normal', "zmin" : 0, "zmax" : 22},
 			"SCAN" : {"urlKey" : 'GEOGRAPHICALGRIDSYSTEMS.MAPS', "name" : 'Scan', "description" : '',
 				"format" : 'jpeg', "style" : 'normal', "zmin" : 0, "zmax" : 22}
 		},
