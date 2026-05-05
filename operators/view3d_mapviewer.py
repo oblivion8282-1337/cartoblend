@@ -1903,6 +1903,13 @@ class VIEW3D_OT_map_goto(bpy.types.Operator):
 		result = _nominatim_results[0]
 		context.scene.gis_goto_result = result.get('display_name', query)
 		lat, lon = float(result['lat']), float(result['lon'])
+		# On a fresh scene geoscn.crs is unset; setOriginGeo would then silently
+		# swallow the reproject failure and leave origin unset, so the viewer
+		# would land on (0,0) instead of the searched place. Mirror the auto-set
+		# done in map_start.execute so the very first goto resolves correctly.
+		if not geoscn.hasCRS:
+			src_key = context.scene.gis_basemap.src
+			geoscn.crs = GRIDS[SOURCES[src_key]['grid']]['CRS']
 		if geoscn.isGeoref:
 			geoscn.updOriginGeo(lon, lat, updObjLoc=prefs.lockObj)
 		else:
