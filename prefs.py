@@ -1271,32 +1271,49 @@ def _probe_tile_url(url, fmt, zmin):
 	except Exception as e:
 		return ('ERROR', '{}: {}'.format(type(e).__name__, e))
 
+# URL of the registration page for each keyed service. Shown as a small ↗
+# button on rows whose key isn't configured yet, so the user can sign up in
+# one click.
+_SERVICE_REGISTER_URLS = {
+	'MAPBOX': 'https://account.mapbox.com/auth/signup/',
+	'MAPTILER': 'https://www.maptiler.com/cloud/account/keys/',
+	'THUNDERFOREST': 'https://www.thunderforest.com/pricing/',
+	'STADIA': 'https://client.stadiamaps.com/signup/',
+	'CDSE_S2': 'https://dataspace.copernicus.eu/',
+}
+
+
 class GIS_UL_providers(UIList):
 	def draw_item(self, context, layout, data, item, icon, active_data, active_propname, index):
 		row = layout.row(align=True)
 		row.prop(item, 'visible', text='')
-		if item.needs_key:
-			# Show a clickable lock icon when the API key is missing. Clicking
-			# opens an inline dialog where the user enters it. Once configured
-			# the lock turns into a quiet checkmark.
-			srckey = item.key.split('.', 1)[0]
-			info = providers_mod.KEYED_SOURCES.get(srckey, ())
-			try:
-				prefs = context.preferences.addons[PKG].preferences
-				configured = all(getattr(prefs, a, '') for a in info)
-			except (KeyError, AttributeError):
-				configured = False
-			if configured:
-				row.label(text='', icon='UNLOCKED')
-			else:
-				op = row.operator('bgis.unlock_provider',
-					text='', icon='LOCKED', emboss=False)
-				op.srckey = srckey
-		else:
-			row.label(text='', icon='CHECKMARK' if item.visible else 'BLANK1')
-		row.label(text=item.display_name)
+		# Layer name takes a fixed share of the row so key inputs line up.
+		name_col = row.column()
+		name_col.label(text=item.display_name)
 		if item.is_custom:
 			row.label(text='', icon='USER')
+		if not item.needs_key:
+			return
+		# Render API-key fields inline so the user can type directly without
+		# having to discover a hidden dialog. All rows of the same keyed
+		# service bind to the same prefs attribute — typing into one updates
+		# the rest the next time Blender redraws.
+		srckey = item.key.split('.', 1)[0]
+		attrs = providers_mod.KEYED_SOURCES.get(srckey, ())
+		try:
+			prefs = context.preferences.addons[PKG].preferences
+		except (KeyError, AttributeError):
+			return
+		configured = all(getattr(prefs, a, '') for a in attrs)
+		key_row = row.row(align=True)
+		key_row.alert = not configured  # red-tint empty fields to draw the eye
+		for attr in attrs:
+			key_row.prop(prefs, attr, text='')
+		if not configured:
+			register_url = _SERVICE_REGISTER_URLS.get(srckey)
+			if register_url:
+				op = row.operator('wm.url_open', icon='URL', text='')
+				op.url = register_url
 
 
 def _format_items(self, context):
@@ -1542,82 +1559,6 @@ class BGIS_OT_remove_provider(Operator):
 		return {'FINISHED'}
 
 
-# Service-level metadata used by the inline unlock dialog. One row per
-# keyed source family in providers_mod.KEYED_SOURCES.
-_UNLOCK_SERVICES = {
-	'MAPBOX': {
-		'title': 'Unlock Mapbox',
-		'desc': '8 layers — register free for 200k tile requests/month',
-		'register_url': 'https://account.mapbox.com/auth/signup/',
-		'fields': [('mapbox_token', 'Access Token')],
-	},
-	'MAPTILER': {
-		'title': 'Unlock MapTiler',
-		'desc': '13 layers — free tier 100k map loads/month',
-		'register_url': 'https://www.maptiler.com/cloud/account/keys/',
-		'fields': [('maptiler_api_key', 'API Key')],
-	},
-	'THUNDERFOREST': {
-		'title': 'Unlock Thunderforest',
-		'desc': '10 layers — free hobby plan',
-		'register_url': 'https://www.thunderforest.com/pricing/',
-		'fields': [('thunderforest_api_key', 'API Key')],
-	},
-	'STADIA': {
-		'title': 'Unlock Stadia Maps',
-		'desc': '15 layers — free tier 200k credits/month',
-		'register_url': 'https://client.stadiamaps.com/signup/',
-		'fields': [('stadia_api_key', 'API Key')],
-	},
-	'CDSE_S2': {
-		'title': 'Unlock Copernicus Sentinel-2',
-		'desc': 'Sentinel-2 satellite imagery, free for commercial use',
-		'register_url': 'https://dataspace.copernicus.eu/',
-		'fields': [
-			('cdse_client_id', 'Client ID'),
-			('cdse_client_secret', 'Client Secret'),
-		],
-	},
-}
-
-
-class BGIS_OT_unlock_provider(Operator):
-	bl_idname = "bgis.unlock_provider"
-	bl_description = 'Enter the API key required by this provider'
-	bl_label = "Unlock Provider"
-	bl_options = {'INTERNAL'}
-
-	srckey: StringProperty()
-
-	def invoke(self, context, event):
-		if self.srckey not in _UNLOCK_SERVICES:
-			self.report({'ERROR'}, "Unknown service: {}".format(self.srckey))
-			return {'CANCELLED'}
-		return context.window_manager.invoke_props_dialog(self, width=440)
-
-	def draw(self, context):
-		layout = self.layout
-		prefs = context.preferences.addons[PKG].preferences
-		info = _UNLOCK_SERVICES[self.srckey]
-		layout.label(text=info['title'])
-		layout.label(text=info['desc'], icon='INFO')
-		layout.separator()
-		for attr, label in info['fields']:
-			row = layout.row()
-			row.label(text=label)
-			row.prop(prefs, attr, text='')
-		layout.separator()
-		op = layout.operator("wm.url_open", icon='URL', text='Open registration page')
-		op.url = info['register_url']
-
-	def execute(self, context):
-		# Values are written live via layout.prop(prefs, attr); just refresh the
-		# UIList so the lock icon disappears for newly-configured services.
-		prefs = context.preferences.addons[PKG].preferences
-		rebuild_providers_collection(prefs)
-		return {'FINISHED'}
-
-
 class BGIS_OT_import_xyz_catalog(Operator):
 	bl_idname = "bgis.import_xyz_catalog"
 	bl_description = ('Fetch the leaflet-providers / xyzservices catalog '
@@ -1683,7 +1624,6 @@ BGIS_OT_edit_provider,
 BGIS_OT_remove_provider,
 BGIS_OT_reset_providers,
 BGIS_OT_import_xyz_catalog,
-BGIS_OT_unlock_provider,
 ]
 
 def register():
