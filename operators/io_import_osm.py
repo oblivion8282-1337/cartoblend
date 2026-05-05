@@ -1626,6 +1626,14 @@ class IMPORTGIS_OT_osm_query(Operator, OSM_IMPORT):
 			for t in cat['tags']:
 				if t not in OSMTAGS:
 					OSMTAGS.append(t)
+		# When a basemap-export mesh exists, default to using it as the
+		# elevation source so OSM features land on the displaced terrain
+		# instead of z=0. The user can still toggle it off in the dialog.
+		for idx, obj in enumerate(context.scene.objects):
+			if obj.type == 'MESH' and obj.name.startswith('EXPORT_'):
+				self.useElevObj = True
+				self.objElevLst = str(idx)
+				break
 		return context.window_manager.invoke_props_dialog(self)
 
 	def draw(self, context):

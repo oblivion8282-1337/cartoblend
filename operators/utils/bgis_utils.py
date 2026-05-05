@@ -42,8 +42,15 @@ class DropToGround():
 		self.bbox = getBBOX.fromObj(ground, applyTransform=True)
 		self.mw = self.ground.matrix_world
 		self.mwi = self.mw.inverted()
+		# Hold a reference to the evaluated object so deforming modifiers
+		# (DISPLACE on a DEM-driven plane, etc.) are honored by ray_cast.
+		# Object.ray_cast respects modifiers when show_viewport is True,
+		# but resolving via evaluated_get makes the intent explicit and
+		# guards against the base-mesh fallback in edge cases.
+		dg = bpy.context.evaluated_depsgraph_get()
+		self.eval_ground = self.ground.evaluated_get(dg)
 		if self.method == 'BVH':
-			self.bvh = BVHTree.FromObject(self.ground, bpy.context.evaluated_depsgraph_get(), deform=True)
+			self.bvh = BVHTree.FromObject(self.ground, dg, deform=True)
 
 	def rayCast(self, x, y):
 		#Hit vector
@@ -56,7 +63,7 @@ class DropToGround():
 		rcHit = RayCastHit()
 		#raycast
 		if self.method == 'OBJ':
-			rcHit.hit, rcHit.loc, rcHit.normal, rcHit.faceIdx = self.ground.ray_cast(orgObjSpace, direction)
+			rcHit.hit, rcHit.loc, rcHit.normal, rcHit.faceIdx = self.eval_ground.ray_cast(orgObjSpace, direction)
 		elif self.method == 'BVH':
 			rcHit.loc, rcHit.normal, rcHit.faceIdx, rcHit.dst = self.bvh.ray_cast(orgObjSpace, direction)
 			if not rcHit.loc:
