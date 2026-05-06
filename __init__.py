@@ -355,10 +355,10 @@ class VIEW3D_PT_gis_scene(bpy.types.Panel):
 	def draw(self, context):
 		layout = self.layout
 		row = layout.row(align=True)
-		if IMPORT_OSM:
-			row.operator("importgis.osm_query", icon_value=icons_dict["osm"].icon_id, text="Get OSM")
 		if GET_DEM:
 			row.operator("importgis.dem_query", icon_value=icons_dict["raster"].icon_id, text="Get DEM")
+		if IMPORT_OSM:
+			row.operator("importgis.osm_query", icon_value=icons_dict["osm"].icon_id, text="Get OSM")
 
 # Building Materials sub-panel is registered via io_import_osm.py (bl_parent_id = VIEW3D_PT_gis_scene)
 
