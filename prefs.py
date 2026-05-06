@@ -739,13 +739,13 @@ class BGIS_PREFS(AddonPreferences):
 		key = self.opentopography_api_key
 		status = self.opentopography_key_status
 		if not key:
-			icon_kw, badge = {'icon': 'X'}, ''
+			icon_kw = {'icon': 'X'}
 		elif status == 'VALID':
-			icon_kw, badge = _icon_kw('check_ok', 'CHECKBOX_HLT'), 'valid'
+			icon_kw = _icon_kw('check_ok', 'CHECKBOX_HLT')
 		elif status == 'INVALID':
-			icon_kw, badge = _icon_kw('check_fail', 'CANCEL'), 'invalid'
+			icon_kw = _icon_kw('check_fail', 'CANCEL')
 		else:
-			icon_kw, badge = {'icon': 'QUESTION'}, 'not tested'
+			icon_kw = {'icon': 'QUESTION'}
 
 		row = sub.row(align=True)
 		row.label(text='OpenTopography Key', **icon_kw)
@@ -756,13 +756,6 @@ class BGIS_PREFS(AddonPreferences):
 		row.operator('bgis.test_opentopography_key', icon='FILE_REFRESH', text='Test')
 		op = row.operator('wm.url_open', icon='URL', text='')
 		op.url = 'https://portal.opentopography.org/myopentopo'
-
-		# Status badge underneath. Alert flag colors the row text red when invalid;
-		# the custom green icon already conveys success without alert styling.
-		if badge:
-			badge_row = sub.row()
-			badge_row.alert = (status == 'INVALID')
-			badge_row.label(text='Status: ' + badge, **icon_kw)
 
 		# OSM tag list + Import/Export options
 		sub = box.box()
