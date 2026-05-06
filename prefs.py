@@ -717,6 +717,7 @@ class BGIS_PREFS(AddonPreferences):
 		row.label(text='', icon='CHECKMARK' if configured else 'X')
 		row.label(text='OpenTopography Key')
 		row.prop(self, 'opentopography_api_key', text='')
+		row.operator('bgis.test_opentopography_key', icon='FILE_REFRESH', text='Test')
 		op = row.operator('wm.url_open', icon='URL', text='')
 		op.url = 'https://portal.opentopography.org/myopentopo'
 
@@ -1703,6 +1704,56 @@ class BGIS_OT_reset_providers(Operator):
 		return {'FINISHED'}
 
 
+class BGIS_OT_test_opentopography_key(Operator):
+	"""Send a tiny test request to verify the OpenTopography API key works"""
+	bl_idname = "bgis.test_opentopography_key"
+	bl_label = "Test OpenTopography API key"
+	bl_description = "Send a small test request to verify the entered API key works"
+	bl_options = {'INTERNAL'}
+
+	def execute(self, context):
+		from urllib.request import Request, urlopen
+		from urllib.error import URLError, HTTPError
+		prefs = context.preferences.addons[PKG].preferences
+		key = prefs.opentopography_api_key
+		if not key:
+			self.report({'ERROR'}, "No API key entered")
+			return {'CANCELLED'}
+		# Tiny bbox over Munich — well inside SRTM coverage, ~1km square.
+		url = (
+			"https://portal.opentopography.org/API/globaldem"
+			"?demtype=SRTMGL3&west=11.50&east=11.51"
+			"&south=48.10&north=48.11&outputFormat=GTiff"
+			"&API_Key=" + key
+		)
+		req = Request(url, headers={'User-Agent': settings.user_agent})
+		try:
+			with urlopen(req, timeout=15) as resp:
+				head = resp.read(4)
+		except HTTPError as e:
+			try:
+				body = e.read(200).decode('utf-8', errors='replace').strip()
+			except Exception:
+				body = ''
+			if e.code in (401, 403):
+				self.report({'ERROR'}, "API key rejected by OpenTopography (HTTP %d)" % e.code)
+			else:
+				self.report({'ERROR'}, "OpenTopography returned HTTP %d: %s" % (e.code, body[:120]))
+			return {'CANCELLED'}
+		except URLError as e:
+			self.report({'ERROR'}, "Network error: %s" % e.reason)
+			return {'CANCELLED'}
+		except Exception as e:
+			self.report({'ERROR'}, "Test failed: %s" % e)
+			return {'CANCELLED'}
+		# TIFF magic bytes: 'II' little-endian or 'MM' big-endian.
+		if head[:2] in (b'II', b'MM'):
+			self.report({'INFO'}, "API key is valid")
+			return {'FINISHED'}
+		self.report({'WARNING'}, "Got HTTP 200 but response is not a GeoTIFF (key may be invalid)")
+		return {'CANCELLED'}
+
+
 classes = [
 GIS_PG_provider_row,
 GIS_UL_providers,
@@ -1731,6 +1782,7 @@ BGIS_OT_edit_provider,
 BGIS_OT_remove_provider,
 BGIS_OT_reset_providers,
 BGIS_OT_import_xyz_catalog,
+BGIS_OT_test_opentopography_key,
 ]
 
 def register():
