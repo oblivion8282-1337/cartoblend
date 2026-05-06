@@ -511,6 +511,9 @@ class BGIS_PREFS(AddonPreferences):
 		)
 
 	def updateOpentopoKey(self, context):
+		# Reset validation state — user edited the key, the old test result
+		# no longer applies.
+		self.opentopography_key_status = 'UNKNOWN'
 		_schedule_credential_sync('opentopography_api_key', self.opentopography_api_key)
 
 	opentopography_api_key: StringProperty(
@@ -518,6 +521,18 @@ class BGIS_PREFS(AddonPreferences):
 		description="you need to register and request a key from opentopography website",
 		subtype = 'PASSWORD',
 		update = updateOpentopoKey
+	)
+
+	# Transient validation state set by BGIS_OT_test_opentopography_key.
+	# SKIP_SAVE so it never persists — every Blender session starts un-tested.
+	opentopography_key_status: EnumProperty(
+		items=[
+			('UNKNOWN', 'Not tested', 'Key has not been tested yet'),
+			('VALID',   'Valid',      'Key was accepted by OpenTopography'),
+			('INVALID', 'Invalid',    'Key was rejected by OpenTopography'),
+		],
+		default='UNKNOWN',
+		options={'SKIP_SAVE'},
 	)
 
 	def updateMapTilerApiKey(self, context):
@@ -713,10 +728,27 @@ class BGIS_PREFS(AddonPreferences):
 		# OpenTopography is a DEM service (not a tile provider); its key lives
 		# next to the DEM picker rather than in the basemap catalog.
 		row = sub.row(align=True)
-		configured = bool(self.opentopography_api_key)
-		row.label(text='', icon='CHECKMARK' if configured else 'X')
+		# 4-state indicator next to the OpenTopography key:
+		#   empty                      → 'X'         (no key entered)
+		#   filled, untested           → 'QUESTION'  (key entered but not validated)
+		#   filled, tested → VALID     → 'CHECKMARK' (green-tinted)
+		#   filled, tested → INVALID   → 'CANCEL'    (red X)
+		key = self.opentopography_api_key
+		status = self.opentopography_key_status
+		if not key:
+			icon = 'X'
+		elif status == 'VALID':
+			icon = 'CHECKMARK'
+		elif status == 'INVALID':
+			icon = 'CANCEL'
+		else:
+			icon = 'QUESTION'
+		row.label(text='', icon=icon)
 		row.label(text='OpenTopography Key')
-		row.prop(self, 'opentopography_api_key', text='')
+		# Highlight the prop field red when the key was rejected.
+		field_row = row.row(align=True)
+		field_row.alert = (status == 'INVALID')
+		field_row.prop(self, 'opentopography_api_key', text='')
 		row.operator('bgis.test_opentopography_key', icon='FILE_REFRESH', text='Test')
 		op = row.operator('wm.url_open', icon='URL', text='')
 		op.url = 'https://portal.opentopography.org/myopentopo'
@@ -1723,6 +1755,7 @@ class BGIS_OT_test_opentopography_key(Operator):
 		prefs = context.preferences.addons[PKG].preferences
 		key = prefs.opentopography_api_key
 		if not key:
+			prefs.opentopography_key_status = 'UNKNOWN'
 			self._popup(context, "Missing key", "No API key entered.", icon='ERROR')
 			return {'CANCELLED'}
 		# Tiny bbox over Munich — well inside SRTM coverage, ~1km square.
@@ -1741,7 +1774,11 @@ class BGIS_OT_test_opentopography_key(Operator):
 				body = e.read(200).decode('utf-8', errors='replace').strip()
 			except Exception:
 				body = ''
+			# Treat 401/403 as a definitively rejected key. Other HTTP errors
+			# (rate limit, 5xx, malformed bbox) leave the status UNKNOWN —
+			# the key itself might still be fine.
 			if e.code in (401, 403):
+				prefs.opentopography_key_status = 'INVALID'
 				self._popup(context, "Key rejected",
 					"OpenTopography returned HTTP %d.\nThe API key is invalid or revoked." % e.code,
 					icon='ERROR')
@@ -1751,6 +1788,7 @@ class BGIS_OT_test_opentopography_key(Operator):
 					icon='ERROR')
 			return {'CANCELLED'}
 		except URLError as e:
+			# Network failures leave the status UNKNOWN.
 			self._popup(context, "Network error", str(e.reason), icon='ERROR')
 			return {'CANCELLED'}
 		except Exception as e:
@@ -1758,10 +1796,13 @@ class BGIS_OT_test_opentopography_key(Operator):
 			return {'CANCELLED'}
 		# TIFF magic bytes: 'II' little-endian or 'MM' big-endian.
 		if head[:2] in (b'II', b'MM'):
-			self._popup(context, "API key is valid",
-				"OpenTopography accepted the key and returned a GeoTIFF.",
-				icon='CHECKMARK')
+			prefs.opentopography_key_status = 'VALID'
+			# No popup on success — the green checkmark in the prefs row is
+			# the feedback. The redraw below makes sure it appears immediately.
+			for area in context.screen.areas:
+				area.tag_redraw()
 			return {'FINISHED'}
+		prefs.opentopography_key_status = 'INVALID'
 		self._popup(context, "Unexpected response",
 			"HTTP 200 but the body is not a GeoTIFF — the key may be invalid.",
 			icon='ERROR')
