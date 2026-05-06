@@ -50,6 +50,14 @@ class GeoRef():
 			self.origin[0] += abs(self.pxSize.x/2)
 			self.origin[1] -= abs(self.pxSize.y/2)
 		self.rotation = xy(*rot)
+		# Reject a singular affine transform up front: pxFromGeo() / geoFromPx()
+		# divide by (pxSize.x*pxSize.y - rotation.x*rotation.y), and a near-zero
+		# determinant would surface as a confusing ZeroDivisionError much later.
+		det = self.pxSize.x * self.pxSize.y - self.rotation.x * self.rotation.y
+		if abs(det) < 1e-12:
+			raise ValueError(
+				"Singular affine transform: pxSize={} rotation={} (determinant ≈ 0)".format(
+					tuple(self.pxSize), tuple(self.rotation)))
 		if subBoxGeo is not None:
 			# Define a subbox at init is optionnal, we can also do it later
 			# Setting the subBox will check if the box overlap the raster extent

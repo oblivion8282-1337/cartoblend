@@ -138,6 +138,45 @@ def restore_credentials(prefs):
 			setattr(prefs, key, val)
 			log.info('Restored credential: %s', key)
 
+################
+# Tile cache size memoization
+#
+# Preferences.draw() is called by Blender on every redraw of the prefs panel
+# (mouse move, hover, tab switch). Walking the cache folder with os.listdir +
+# os.path.getsize on each redraw makes the UI sluggish once the cache holds
+# many GB. We compute the size lazily and cache it until a clear operator runs
+# or the cache folder property changes.
+_cache_stats_cache = None  # tuple (cache_dir, size_str, file_count) or None
+
+
+def _format_cache_size(total_bytes):
+	if total_bytes > 1024 ** 3:
+		return "{:.1f} GB".format(total_bytes / (1024 ** 3))
+	if total_bytes > 1024 ** 2:
+		return "{:.0f} MB".format(total_bytes / (1024 ** 2))
+	return "{:.0f} KB".format(total_bytes / 1024)
+
+
+def _get_cache_stats(cache_dir):
+	"""Return (size_str, file_count) for cache_dir, recomputing only on miss."""
+	global _cache_stats_cache
+	if _cache_stats_cache is not None and _cache_stats_cache[0] == cache_dir:
+		return _cache_stats_cache[1], _cache_stats_cache[2]
+	try:
+		gpkg_files = [f for f in os.listdir(cache_dir) if f.endswith('.gpkg')]
+		total_bytes = sum(os.path.getsize(os.path.join(cache_dir, f)) for f in gpkg_files)
+	except OSError:
+		return None, 0
+	size_str = _format_cache_size(total_bytes)
+	_cache_stats_cache = (cache_dir, size_str, len(gpkg_files))
+	return size_str, len(gpkg_files)
+
+
+def _invalidate_cache_stats():
+	global _cache_stats_cache
+	_cache_stats_cache = None
+
+
 '''
 Default Enum properties contents (list of tuple (value, label, tootip))
 Theses properties are automatically filled from a serialized json string stored in a StringProperty
@@ -597,16 +636,10 @@ class BGIS_PREFS(AddonPreferences):
 		row.prop(self, "cacheFolder", text='')
 		cache_dir = self.cacheFolder
 		if cache_dir and os.path.isdir(cache_dir):
-			gpkg_files = [f for f in os.listdir(cache_dir) if f.endswith('.gpkg')]
-			total_bytes = sum(os.path.getsize(os.path.join(cache_dir, f)) for f in gpkg_files)
-			if total_bytes > 1024 ** 3:
-				size_str = "{:.1f} GB".format(total_bytes / (1024 ** 3))
-			elif total_bytes > 1024 ** 2:
-				size_str = "{:.0f} MB".format(total_bytes / (1024 ** 2))
-			else:
-				size_str = "{:.0f} KB".format(total_bytes / 1024)
-			box.label(text="{} across {} cached source{}".format(
-				size_str, len(gpkg_files), '' if len(gpkg_files) == 1 else 's'))
+			size_str, file_count = _get_cache_stats(cache_dir)
+			if size_str is not None:
+				box.label(text="{} across {} cached source{}".format(
+					size_str, file_count, '' if file_count == 1 else 's'))
 		row = box.row(align=True)
 		row.operator("bgis.cache_clear_expired", icon='TRASH', text="Clear Expired")
 		row.operator("bgis.cache_clear_all", icon='CANCEL', text="Clear All")
@@ -1238,6 +1271,7 @@ class BGIS_OT_cache_clear_all(Operator):
 					count += 1
 				except OSError as e:
 					log.warning("Cannot remove %s: %s", f, e)
+		_invalidate_cache_stats()
 		self.report({'INFO'}, "Removed {} cache files".format(count))
 		return {'FINISHED'}
 
@@ -1276,6 +1310,7 @@ class BGIS_OT_cache_clear_expired(Operator):
 				db.close()
 			except Exception as e:
 				log.warning("Cannot clean %s: %s", f, e)
+		_invalidate_cache_stats()
 		self.report({'INFO'}, "Removed {} expired tiles".format(total_removed))
 		return {'FINISHED'}
 

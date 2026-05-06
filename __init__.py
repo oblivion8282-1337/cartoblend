@@ -39,10 +39,10 @@ bl_info = {
 class BlenderVersionError(Exception):
 	pass
 
-if bl_info['blender'] > bpy.app.version:
-	raise BlenderVersionError(f"This addon requires Blender >= {bl_info['blender']}")
-#if bpy.app.version[0] > 5: #prevent breaking changes on major release
-#	raise BlenderVersionError(f"This addon is not tested against Blender {bpy.app.version[0]}.x breaking changes")
+# The version check used to run at module import time. That fired before the
+# user had a chance to enable/disable the addon and surfaced as a raw traceback
+# instead of Blender's "addon failed to enable" dialog. The check now lives in
+# register() so a too-old Blender produces a clean error in the addon prefs UI.
 
 
 #Modules
@@ -568,6 +568,10 @@ def _submodule_steps():
 
 
 def register():
+	if bl_info['blender'] > bpy.app.version:
+		raise BlenderVersionError(
+			f"This addon requires Blender >= {bl_info['blender']}, "
+			f"got {tuple(bpy.app.version)}")
 	_install_global_hooks()
 	#icons
 	global icons_dict
@@ -644,7 +648,7 @@ def register():
 		# Sync every API key/token to the core settings singleton so backends
 		# that consult settings.* (rather than re-reading prefs) see the
 		# restored credentials immediately, not only after the first keystroke.
-		settings.maptiler_api_key = preferences.maptiler_api_key
+		settings.maptiler_api_key = preferences.maptiler_api_key or None
 		settings.mapbox_token = getattr(preferences, 'mapbox_token', '') or None
 		settings.thunderforest_api_key = getattr(preferences, 'thunderforest_api_key', '') or None
 		settings.stadia_api_key = getattr(preferences, 'stadia_api_key', '') or None
