@@ -22,8 +22,15 @@
 import os
 import io
 import uuid
+import threading
 
 import numpy as np
+
+# FreeImage 3.16 (used via imageio) is not thread-safe — its format detection
+# walks globals so concurrent imread/imwrite calls from a ThreadPoolExecutor
+# corrupt internal state and SIGSEGV inside FreeImage_GetFileTypeFromMemory.
+# Serialise every imageio call through this lock; numpy work outside stays free.
+_imageio_lock = threading.Lock()
 
 from .georef import GeoRef
 from ..proj.reproj import reprojImg
@@ -253,7 +260,8 @@ class NpImage():
 
 	def _npFromImgIO(self, img):
 		'''Use ImageIO to extract numpy array from image path or bytesIO'''
-		data = imageio.imread(img)
+		with _imageio_lock:
+			data = imageio.imread(img)
 		return self._applySubBox(data)
 
 	def _npFromPIL(self, img):
@@ -312,7 +320,8 @@ class NpImage():
 		elif self.IFACE == 'IMGIO':
 			if ext == 'JPEG' and self.hasAlpha:
 				self.removeAlpha()
-			data = imageio.imwrite(imageio.RETURN_BYTES, self.data, format=ext)
+			with _imageio_lock:
+				data = imageio.imwrite(imageio.RETURN_BYTES, self.data, format=ext)
 
 		elif self.IFACE == 'GDAL':
 			mem = self.toGDAL()
@@ -389,7 +398,8 @@ class NpImage():
 		elif self.IFACE == 'IMGIO':
 			if imgFormat == 'jpg' and self.hasAlpha:
 				self.removeAlpha()
-			imageio.imwrite(path, self.data)#float32 support ok
+			with _imageio_lock:
+				imageio.imwrite(path, self.data)#float32 support ok
 		elif self.IFACE == 'GDAL':
 			if imgFormat == 'png':
 				driver = 'PNG'
