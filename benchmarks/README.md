@@ -8,6 +8,16 @@ same workloads.
 
 ## TL;DR
 
+**Live in-Blender pipeline (Map Viewer tile loading, Munich centre, 24 OSM tiles):**
+
+```
+Cold   (HTTP fetch + decode + mosaic)   █████████████████████████████  5.35×
+Warm   (DB read + decode + mosaic)      ████████████                   2.25×
+Warm²  (decode-cache hit + mosaic)      █████████████                  2.37×
+```
+
+**Standalone modules (no Blender needed):**
+
 ```
 OSM XML parser (50k nodes / 5k ways)    █                                1.25×
 Tile cache streaming (pan workload)     ███                              1.78×
@@ -19,6 +29,21 @@ Voronoi point dedup (50k points)        ███                              2
 See [`results.md`](results.md) for the full report.
 
 ## How to run
+
+### Live Blender benchmark (most representative)
+
+In a running Blender session with the addon enabled:
+
+```python
+exec(open('benchmarks/live_blender_bench.py').read())
+print(result)
+```
+
+To compare against another commit, swap the installed addon files
+(or the source tree, depending on your install layout), reload the
+addon (`addon_utils.disable` + `enable`), and re-run.
+
+### Standalone module benchmark
 
 ```bash
 # 1. Clone upstream BlenderGIS for comparison
