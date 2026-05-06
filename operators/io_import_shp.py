@@ -531,9 +531,9 @@ class IMPORTGIS_OT_shapefile(Operator):
 					shape = feat
 
 				#Progress infos
-				pourcent = round(((featIdx+1)*100)/nbFeats)
-				if 0 <= pourcent <= 100 and pourcent % 10 == 0 and pourcent != progress:
-					progress = pourcent
+				report_every = max(1, nbFeats // 10)
+				if featIdx % report_every == 0:
+					pourcent = round(((featIdx+1)*100)/nbFeats)
 					if pourcent == 100:
 						print(str(pourcent)+'%')
 					else:

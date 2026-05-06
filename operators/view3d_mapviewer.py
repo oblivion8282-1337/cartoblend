@@ -31,6 +31,7 @@ import bpy
 from mathutils import Vector
 from bpy.types import Operator, Panel, AddonPreferences, PropertyGroup
 from bpy.props import StringProperty, IntProperty, FloatProperty, BoolProperty, EnumProperty, FloatVectorProperty, PointerProperty
+from bpy.app.handlers import persistent
 import addon_utils
 import gpu
 from gpu_extras.batch import batch_for_shader
@@ -539,6 +540,12 @@ def drawRoundedRect(x, y, w, h, color, radius=6):
 	for batch in _rect_batch_cache_batches:
 		batch.draw(shader)
 
+#Cache for the overlay panel width: blf.dimensions is surprisingly expensive
+#and would otherwise be invoked 3x per frame for strings that only change
+#when the user actually pans/zooms.
+_overlay_panel_w_cache = {'key': None, 'max_w': 0}
+
+
 def _drawInfoOverlay(context):
 	"""Draw zoom level, coordinates and scale overlay in the bottom-left corner."""
 	global _overlay_zoom, _overlay_lat, _overlay_lon, _overlay_scale, _overlay_detail_offset, _overlay_export_tiles
@@ -563,13 +570,29 @@ def _drawInfoOverlay(context):
 
 	lines = [zoom_txt, coord_txt, scale_txt]
 
-	# Measure panel size
+	# Set font once for the whole overlay (used both for measuring and drawing).
 	blf.size(font_id, 14)
-	max_w = 0
-	for line in lines:
-		w = blf.dimensions(font_id, line)[0]
-		if w > max_w:
-			max_w = w
+
+	# Measure panel size \u2014 cache by the inputs that actually shape the strings.
+	# The lat/lon are formatted with 4-decimal precision, so quantising the
+	# cache key to that precision matches what's actually rendered.
+	cache_key = (
+		_overlay_zoom,
+		_overlay_scale,
+		_overlay_detail_offset,
+		round(_overlay_lat, 4),
+		round(_overlay_lon, 4),
+	)
+	if _overlay_panel_w_cache['key'] == cache_key:
+		max_w = _overlay_panel_w_cache['max_w']
+	else:
+		max_w = 0
+		for line in lines:
+			w = blf.dimensions(font_id, line)[0]
+			if w > max_w:
+				max_w = w
+		_overlay_panel_w_cache['key'] = cache_key
+		_overlay_panel_w_cache['max_w'] = max_w
 
 	panel_w = int(max_w + pad_x * 2)
 	panel_h = int(len(lines) * line_h + pad_y * 2)
@@ -593,8 +616,7 @@ def _drawInfoOverlay(context):
 	shader.uniform_float("color", (0.35, 0.35, 0.35, 0.40))
 	batch.draw(shader)
 
-	# Draw text lines top-to-bottom
-	blf.size(font_id, 14)
+	# Draw text lines top-to-bottom (font size already set above)
 	cy = py + panel_h - pad_y - 14
 	for i, line in enumerate(lines):
 		blf.position(font_id, px + pad_x, cy, 0)
@@ -1405,8 +1427,13 @@ class VIEW3D_OT_map_viewer(Operator):
 			elif _detail_changed_pending:
 				_detail_changed_pending = False
 				self.map.get()
-			# Timer: always redraw to update progress text and overlay data
-			context.area.tag_redraw()
+			# Timer: only redraw when something actually changed; idle ticks
+			# would otherwise waste a viewport repaint at the timer rate.
+			# Mouse-driven redraws happen via MOUSEMOVE events, not the timer.
+			if (self.map.srv.running or self.progress or
+					_goto_pending or _detail_changed_pending or _zoom_jump_pending or
+					_export_pending or _exit_pending or _source_change_pending):
+				context.area.tag_redraw()
 			return {'PASS_THROUGH'}
 
 		#Pass through events when mouse is over sidebar or toolbar
@@ -1433,8 +1460,11 @@ class VIEW3D_OT_map_viewer(Operator):
 					# map scale up
 					self.map.scale *= 10
 					self.map.place()
-					#Scale existing objects
+					#Scale existing objects — only top-level parents, so children
+					#aren't double-scaled (they inherit the parent transform).
 					for obj in scn.objects:
+						if obj.parent is not None:
+							continue
 						obj.location /= 10
 						obj.scale /= 10
 
@@ -1488,8 +1518,11 @@ class VIEW3D_OT_map_viewer(Operator):
 					if s < 1: s = 1
 					self.map.scale = s
 					self.map.place()
-					#Scale existing objects
+					#Scale existing objects — only top-level parents, so children
+					#aren't double-scaled (they inherit the parent transform).
 					for obj in scn.objects:
+						if obj.parent is not None:
+							continue
 						obj.location *= 10
 						obj.scale *= 10
 
@@ -2020,21 +2053,56 @@ class VIEW3D_OT_map_exit(bpy.types.Operator):
 
 MARKER_COLLECTION_NAME = 'Markers'
 
+# Cache for marker collection lookup and the filtered marker-empty list.
+# Populated lazily on the first read after each invalidation; the
+# depsgraph_update_post handler below clears it whenever the scene graph
+# changes (so we can't return stale references to removed objects).
+_marker_cache = {'marker_objs': None, 'collection': None}
+
+
+@persistent
+def _invalidate_marker_cache(scene=None, depsgraph=None):
+	"""depsgraph_update_post handler: drop the marker cache whenever the
+	scene graph changes (collections linked/unlinked, markers added/removed).
+	@persistent so it survives file load."""
+	_marker_cache['marker_objs'] = None
+	_marker_cache['collection'] = None
+
+
 def _get_or_create_marker_collection(scene):
 	"""Get or create the Markers collection in the scene."""
+	cached = _marker_cache['collection']
+	# Validate the cached datablock is still alive (try/except guards against
+	# IDs deleted out from under us before the depsgraph handler ran).
+	if cached is not None:
+		try:
+			if cached.name == MARKER_COLLECTION_NAME and cached.name in bpy.data.collections:
+				return cached
+		except ReferenceError:
+			_marker_cache['collection'] = None
 	for col in scene.collection.children:
 		if col.name == MARKER_COLLECTION_NAME:
+			_marker_cache['collection'] = col
 			return col
 	col = bpy.data.collections.new(MARKER_COLLECTION_NAME)
 	scene.collection.children.link(col)
+	_marker_cache['collection'] = col
+	# New collection means the marker list cache is stale.
+	_marker_cache['marker_objs'] = None
 	return col
 
 def _get_marker_objects(scene):
 	"""Return all marker empties in the Markers collection."""
+	cached = _marker_cache['marker_objs']
+	if cached is not None:
+		return cached
 	for col in scene.collection.children:
 		if col.name == MARKER_COLLECTION_NAME:
-			return [obj for obj in col.objects if obj.type == 'EMPTY' and obj.get('_cartoblend_marker')]
-	return []
+			result = [obj for obj in col.objects if obj.type == 'EMPTY' and obj.get('_cartoblend_marker')]
+			_marker_cache['marker_objs'] = result
+			return result
+	_marker_cache['marker_objs'] = []
+	return _marker_cache['marker_objs']
 
 
 class VIEW3D_OT_marker_add(bpy.types.Operator):
@@ -2208,10 +2276,23 @@ def register():
 	if _overlay_draw_handler is None:
 		_overlay_draw_handler = bpy.types.SpaceView3D.draw_handler_add(
 			_drawOverlayPersistent, (), 'WINDOW', 'POST_PIXEL')
+	# Hook the marker-cache invalidator into the depsgraph. Idempotent: a
+	# reload during development must not stack multiple identical handlers.
+	if _invalidate_marker_cache not in bpy.app.handlers.depsgraph_update_post:
+		bpy.app.handlers.depsgraph_update_post.append(_invalidate_marker_cache)
 
 def unregister():
 	global _overlay_draw_handler, _map_viewer_active
 	_map_viewer_active = False
+	# Remove the cache-invalidator first so Blender doesn't call into a
+	# half-torn-down module during shutdown.
+	if _invalidate_marker_cache in bpy.app.handlers.depsgraph_update_post:
+		try:
+			bpy.app.handlers.depsgraph_update_post.remove(_invalidate_marker_cache)
+		except ValueError:
+			pass
+	# Drop any cached references so we don't keep stale IDs alive.
+	_invalidate_marker_cache()
 	if _overlay_draw_handler is not None:
 		bpy.types.SpaceView3D.draw_handler_remove(_overlay_draw_handler, 'WINDOW')
 		_overlay_draw_handler = None

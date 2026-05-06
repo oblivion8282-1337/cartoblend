@@ -1336,14 +1336,17 @@ class OSM_IMPORT():
 			context.scene.collection.children.link(layer)
 
 		#Build mesh
-		waysNodesId = {node.id for way in result.ways for node in way.nodes}
+		# Direct access to internal _node_ids/_nodes avoids the O(n) lookup pass
+		# that way.nodes (a property) performs for every iteration.
+		nodes_by_id = result._nodes
+		waysNodesId = {nid for w in result.ways for nid in w._node_ids}
 
 		if 'node' in self.featureType:
 
 			for node in result.nodes:
 
 				#extended tags list
-				extags = [*(node.tags.keys()), *(k + '=' + v for k, v in node.tags.items())]
+				extags = {*node.tags.keys(), *(k + '=' + v for k, v in node.tags.items())}
 
 				if node.id in waysNodesId:
 					continue
@@ -1359,12 +1362,12 @@ class OSM_IMPORT():
 
 			for way in result.ways:
 
-				extags = list(way.tags.keys()) + [k + '=' + v for k, v in way.tags.items()]
+				extags = {*way.tags.keys(), *(k + '=' + v for k, v in way.tags.items())}
 
 				if self.filterTags and not any(tag in self.filterTags for tag in extags):
 					continue
 
-				pts = [(float(node.lon), float(node.lat)) for node in way.nodes]
+				pts = [(float(nodes_by_id[nid].lon), float(nodes_by_id[nid].lat)) for nid in way._node_ids]
 				seed(way.id, way.tags, pts, extags)
 
 

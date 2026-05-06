@@ -5,6 +5,7 @@ import os
 import string
 import bpy
 import math
+import numpy as np
 
 import logging
 log = logging.getLogger(__name__)
@@ -243,54 +244,67 @@ class IMPORTGIS_OT_ascii_grid(Operator, ImportHelper):
                 geoscn.setOriginPrj(*centre)
                 dx, dy = geoscn.getOriginPrj()
 
+            # --- numpy-basierter Datenlader (ersetzt den doppelten for-Loop) ---
+            # Lese die gesamte Daten-Matrix auf einmal; Header wurde bereits oben gelesen,
+            # daher skiprows=0 (Datei-Cursor steht schon auf den Daten).
+            try:
+                arr = np.loadtxt(f, dtype=np.float32)
+            except ValueError as e:
+                log.error("Cannot parse ASC data as float array: %s", e)
+                self.report({'ERROR'}, 'Cannot parse ASC grid data: {}'.format(e))
+                return {'CANCELLED'}
+
+            if arr.shape != (nrows, ncols):
+                log.error('Data shape %s does not match header (%d, %d)', arr.shape, nrows, ncols)
+                self.report({'ERROR'}, 'ASC data shape does not match header dimensions')
+                return {'CANCELLED'}
+
+            # Dezimierung via numpy-Slicing: ASC-Zeile 0 ist der nördlichste Streifen
+            # (höchster y-Wert), daher Zeilen umkehren und dann sampeln.
+            arr = arr[::-1, :]          # flip: Zeile 0 = Süden
+            arr = arr[::step, ::step]   # Dezimierung
+
+            sub_nrows, sub_ncols = arr.shape
+
+            # Koordinatengitter (in Quell-CRS, Einheit: cellsize-Einheiten)
+            col_idx = np.arange(sub_ncols, dtype=np.float32) * (cellsize * step) + offset.x
+            row_idx = np.arange(sub_nrows, dtype=np.float32) * (cellsize * step) + offset.y
+            xs, ys = np.meshgrid(col_idx, row_idx)  # (sub_nrows, sub_ncols)
+
+            if rprj:
+                # Vektorisierte Reprojektion aller Punkte auf einmal
+                src_xs = xs.ravel() + reprojection['from'].x
+                src_ys = ys.ravel() + reprojection['from'].y
+                reproj_pts = rprjToScene.pts(list(zip(src_xs.tolist(), src_ys.tolist())))
+                reproj_arr = np.array(reproj_pts, dtype=np.float32)
+                xs_out = reproj_arr[:, 0] - reprojection['to'].x
+                ys_out = reproj_arr[:, 1] - reprojection['to'].y
+            else:
+                xs_out = xs.ravel()
+                ys_out = ys.ravel()
+
+            zs = arr.ravel()
+
+            if self.importMode == 'CLOUD':
+                # Punkt-Wolke: NoData-Punkte komplett verwerfen
+                mask = zs != nodata
+                xs_out = xs_out[mask]
+                ys_out = ys_out[mask]
+                zs = zs[mask]
+            else:
+                # Mesh: NoData durch 0.0 ersetzen, Topologie bleibt intakt
+                zs = np.where(zs == nodata, np.float32(0.0), zs)
+
+            vertices = list(zip(xs_out.tolist(), ys_out.tolist(), zs.tolist()))
             index = 0
-            vertices = []
             faces = []
 
-            # determine row read method
-            read = self.read_row_whitespace
-            if self.newlines:
-                read = self.read_row_newlines
-
-            for y in range(nrows - 1, -1, -step):
-                # spec doesn't require newline separated rows so make it handle a single line of all values
-                coldata = read(f, ncols)
-                if len(coldata) != ncols:
-                    log.error('Incorrect number of columns for row {row}. Expected {expected}, got {actual}.'.format(row=nrows-y, expected=ncols, actual=len(coldata)))
-                    self.report({'ERROR'}, 'Incorrect number of columns for row, check logs for more infos')
-                    return {'CANCELLED'}
-
-                for i in range(step - 1):
-                    _ = read(f, ncols)
-
-                for x in range(0, ncols, step):
-                    try:
-                        val = float(coldata[x])
-                    except ValueError:
-                        log.error('Value "{val}" in row {row}, column {col} could not be converted to a float.'.format(val=coldata[x], row=nrows-y, col=x))
-                        self.report({'ERROR'}, 'Cannot convert value to float')
-                        return {'CANCELLED'}
-                    is_nodata = (val == nodata)
-                    if self.importMode == 'CLOUD' and is_nodata:
-                        # Drop nodata in point clouds: missing measurement, no point.
-                        continue
-                    if is_nodata:
-                        # Mesh mode keeps the grid topology, so we replace the
-                        # sentinel with 0.0 instead of leaving an outlier spike.
-                        val = 0.0
-                    pt = (x * cellsize + offset.x, y * cellsize + offset.y)
-                    if rprj:
-                        # reproject world-space source coordinate, then transform back to target local-space
-                        pt = rprjToScene.pt(pt[0] + reprojection['from'].x, pt[1] + reprojection['from'].y)
-                        pt = (pt[0] - reprojection['to'].x, pt[1] - reprojection['to'].y)
-                    vertices.append(pt + (val,))
-
         if self.importMode == 'MESH':
-            step_ncols = math.ceil(ncols / step)
-            for r in range(0, math.ceil(nrows / step) - 1):
-                for c in range(0, step_ncols - 1):
+            # sub_ncols/sub_nrows wurden durch numpy-Slicing bereits korrekt berechnet
+            for r in range(0, sub_nrows - 1):
+                for c in range(0, sub_ncols - 1):
                     v1 = index
-                    v2 = v1 + step_ncols
+                    v2 = v1 + sub_ncols
                     v3 = v2 + 1
                     v4 = v1 + 1
                     faces.append((v1, v2, v3, v4))

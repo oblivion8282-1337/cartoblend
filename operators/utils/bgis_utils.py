@@ -173,13 +173,10 @@ class getBBOX():
 			boundPts = [obj.matrix_world @ Vector(corner) for corner in obj.bound_box]
 		else:
 			boundPts = obj.bound_box
-		xmin = min([pt[0] for pt in boundPts])
-		xmax = max([pt[0] for pt in boundPts])
-		ymin = min([pt[1] for pt in boundPts])
-		ymax = max([pt[1] for pt in boundPts])
-		zmin = min([pt[2] for pt in boundPts])
-		zmax = max([pt[2] for pt in boundPts])
-		return BBOX(xmin=xmin, ymin=ymin, zmin=zmin, xmax=xmax, ymax=ymax, zmax=zmax)
+		xs = [pt[0] for pt in boundPts]
+		ys = [pt[1] for pt in boundPts]
+		zs = [pt[2] for pt in boundPts]
+		return BBOX(xmin=min(xs), ymin=min(ys), zmin=min(zs), xmax=max(xs), ymax=max(ys), zmax=max(zs))
 
 	@classmethod
 	def fromScn(cls, scn):

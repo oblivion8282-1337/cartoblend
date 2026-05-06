@@ -258,8 +258,10 @@ class IMPORTGIS_OT_geojson_file(Operator):
 			return {'CANCELLED'}
 
 		# Auto-set UTM CRS from first coordinate if scene has none
+		# Call _first_coord once and reuse the result for both CRS and origin.
+		_cached_first_coord = _first_coord(geojson) if (not geoscn.hasCRS or not geoscn.hasOriginPrj) else None
 		if not geoscn.hasCRS:
-			first = _first_coord(geojson)
+			first = _cached_first_coord
 			if first is None:
 				self.report({'ERROR'}, "GeoJSON contains no usable coordinates")
 				return {'CANCELLED'}
@@ -273,7 +275,7 @@ class IMPORTGIS_OT_geojson_file(Operator):
 			log.info("Auto-set scene CRS to %s", geoscn.crs)
 
 		if not geoscn.hasOriginPrj:
-			first = _first_coord(geojson)
+			first = _cached_first_coord if _cached_first_coord is not None else _first_coord(geojson)
 			if first is not None:
 				lon, lat = first
 				x, y = reprojPt(4326, geoscn.crs, lon, lat)
@@ -297,6 +299,7 @@ class IMPORTGIS_OT_geojson_file(Operator):
 		bmeshes = {}       # name -> bmesh
 		vgroupsObj = {}    # name -> {group_name: [vertex indices]}
 		building_categories = set()  # category names that contain at least one building feature
+		_bm_has_height_layer = set()  # objNames whose dest_bm already has 'height' float layer
 
 		# Collection for separate mode
 		layer = None
@@ -448,11 +451,13 @@ class IMPORTGIS_OT_geojson_file(Operator):
 					# Pre-create layers on dest so they survive joins
 					if is_building:
 						dest_bm.faces.layers.float.new('height')
+						_bm_has_height_layer.add(objName)
 					bmeshes[objName] = dest_bm
 
 				# Ensure 'height' layer exists on dest even if first features weren't buildings
-				if is_building and 'height' not in [l.name for l in dest_bm.faces.layers.float]:
+				if is_building and objName not in _bm_has_height_layer:
 					dest_bm.faces.layers.float.new('height')
+					_bm_has_height_layer.add(objName)
 				if is_building:
 					building_categories.add(objName)
 

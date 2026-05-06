@@ -1,6 +1,7 @@
 import os
 import time
 import threading
+import shutil
 
 import logging
 log = logging.getLogger(__name__)
@@ -37,8 +38,7 @@ def _dem_download_thread(url, filePath, result_holder):
 	rq = Request(url, headers={'User-Agent': result_holder['user_agent']})
 	try:
 		with urlopen(rq, timeout=TIMEOUT) as response, open(filePath, 'wb') as outFile:
-			data = response.read()
-			outFile.write(data)
+			shutil.copyfileobj(response, outFile, length=1 << 20)  # 1 MB-Chunks, kein RAM-Spike
 		with _dem_state_lock:
 			result_holder['ok'] = True
 	except (URLError, HTTPError) as err:

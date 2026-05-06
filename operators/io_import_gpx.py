@@ -805,36 +805,62 @@ class IMPORTGIS_OT_gpx_file(Operator):
 			merged_curve = None if self.separate else bpy.data.curves.new('Tracks', type='CURVE')
 			if merged_curve:
 				merged_curve.dimensions = '3D'
-			track_idx = 0
 
-			for trk in gpx_data['tracks']:
-				trk_name = trk['name'] or f"Track {track_idx + 1}"
-				track_idx += 1
+			# Batch-reproject: collect all valid segments across all tracks into one
+			# flat lon/lat list, call rprj.pts() once, then slice results back.
+			_trk_segments = []  # list of (trk_name, seg_idx, seg_pts) for valid segments
+			_all_lonlat = []    # flat list of (lon, lat) for all points
+			_seg_slices = []    # (start, end) indices into _all_lonlat per segment
 
+			for trk_idx, trk in enumerate(gpx_data['tracks']):
+				trk_name = trk['name'] or f"Track {trk_idx + 1}"
 				for seg_idx, seg_pts in enumerate(trk['segments']):
 					if len(seg_pts) < 2:
 						continue
+					start = len(_all_lonlat)
+					_all_lonlat.extend((p[0], p[1]) for p in seg_pts)
+					_seg_slices.append((start, len(_all_lonlat)))
+					_trk_segments.append((trk_name, seg_idx, seg_pts))
 
-					try:
-						pts_3d = reproject_points(seg_pts)
-					except Exception:
-						log.warning("Reprojection failed for track %s seg %d", trk_name, seg_idx)
-						continue
+			if _all_lonlat:
+				try:
+					_all_prj = rprj.pts(_all_lonlat)
+				except Exception:
+					log.warning("Batch reprojection failed for tracks; falling back to per-segment")
+					_all_prj = None
+			else:
+				_all_prj = None
 
-					if self.separate:
-						seg_name = trk_name if len(trk['segments']) == 1 else f"{trk_name} seg{seg_idx + 1}"
-						obj = make_curve_object(seg_name, pts_3d, trk_col)
-						if obj is None:
-							continue
-						obj['gpx_type'] = 'track'
-						obj['gpx_name'] = trk_name
-						created_objects.append(obj)
+			for (trk_name, seg_idx, seg_pts), (s, e) in zip(_trk_segments, _seg_slices):
+				try:
+					if _all_prj is not None:
+						prj_slice = _all_prj[s:e]
+						if self.useElevation:
+							pts_3d = [(p[0] - dx, p[1] - dy, seg_pts[i][2]) for i, p in enumerate(prj_slice)]
+						else:
+							pts_3d = [(p[0] - dx, p[1] - dy, 0.0) for p in prj_slice]
 					else:
-						# Accumulate as splines in merged curve
-						spline = merged_curve.splines.new('POLY')
-						spline.points.add(len(pts_3d) - 1)
-						for i, pt in enumerate(pts_3d):
-							spline.points[i].co = (pt[0], pt[1], pt[2], 1.0)
+						pts_3d = reproject_points(seg_pts)
+				except Exception:
+					log.warning("Reprojection failed for track %s seg %d", trk_name, seg_idx)
+					continue
+
+				if self.separate:
+					# Determine number of segments for this track name to build the label
+					n_segs = sum(1 for (tn, _, _) in _trk_segments if tn == trk_name)
+					seg_name = trk_name if n_segs == 1 else f"{trk_name} seg{seg_idx + 1}"
+					obj = make_curve_object(seg_name, pts_3d, trk_col)
+					if obj is None:
+						continue
+					obj['gpx_type'] = 'track'
+					obj['gpx_name'] = trk_name
+					created_objects.append(obj)
+				else:
+					# Accumulate as splines in merged curve
+					spline = merged_curve.splines.new('POLY')
+					spline.points.add(len(pts_3d) - 1)
+					for i, pt in enumerate(pts_3d):
+						spline.points[i].co = (pt[0], pt[1], pt[2], 1.0)
 
 			# Finalise merged tracks
 			if not self.separate and merged_curve is not None:

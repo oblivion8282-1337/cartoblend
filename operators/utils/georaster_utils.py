@@ -71,6 +71,10 @@ def _exportAsMesh(georaster, dx=0, dy=0, step=1, buildFaces=True, flat=False, su
 
 
 def exportAsMesh(georaster, dx=0, dy=0, step=1, buildFaces=True, subset=False, reproj=None, flat=False):
+	"""
+	Numpy-basierter Mesh-Export (ersetzt den alten Pure-Python-Loop).
+	Delegiert an _exportAsMesh mit NoData-Handling via numpy-Masking.
+	"""
 	if subset and georaster.subBoxGeo is None:
 		subset = False
 
@@ -79,61 +83,75 @@ def exportAsMesh(georaster, dx=0, dy=0, step=1, buildFaces=True, subset=False, r
 	else:
 		georef = georaster.getSubBoxGeoRef()
 
-	if not flat:
-		img = georaster.readAsNpArray(subset=subset)
-		#TODO raise error if multiband
-		data = img.data
-
-	x0, y0 = georef.origin #pxcenter
+	x0, y0 = georef.origin  # pxcenter
 	pxSizeX, pxSizeY = georef.pxSize.x, georef.pxSize.y
 	w, h = georef.rSize.x, georef.rSize.y
 
-	#Build the mesh (Note : avoid using bmesh because it's very slow with large mesh, use from_pydata instead)
-	verts = []
-	faces = []
-	nodata = set()
-	idxMap = {}
-	for py in range(0, h, step):
-		for px in range(0, w, step):
-			x = x0 + (pxSizeX * px)
-			y = y0 + (pxSizeY * py)
+	# Adjust against step
+	w_s, h_s = math.ceil(w / step), math.ceil(h / step)
+	pxSizeX_s, pxSizeY_s = pxSizeX * step, pxSizeY * step
 
-			if reproj is not None:
-				x, y = reproj.pt(x, y)
+	# Build coordinate grids
+	x = np.array([(x0 + (pxSizeX_s * i)) - dx for i in range(w_s)], dtype=np.float64)
+	y = np.array([(y0 + (pxSizeY_s * i)) - dy for i in range(h_s)], dtype=np.float64)
+	xx, yy = np.meshgrid(x, y)  # (h_s, w_s)
 
-			#shift
-			x -= dx
-			y -= dy
+	if flat:
+		zz = np.zeros((h_s, w_s), dtype=np.float32)
+		nodata_mask = np.zeros((h_s, w_s), dtype=bool)
+	else:
+		zz = georaster.readAsNpArray(subset=subset).data[::step, ::step]  # (h_s, w_s)
+		nodata_val = georaster.noData
+		nodata_mask = (zz == nodata_val) if nodata_val is not None else np.zeros(zz.shape, dtype=bool)
 
-			if flat:
-				z = 0
-			else:
-				z = data[py, px]
+	if reproj is not None:
+		# Vektorisierte Reprojektion aller Punkte auf einmal
+		pts = list(zip(xx.ravel().tolist(), yy.ravel().tolist()))
+		reproj_pts = reproj.pts(pts)
+		reproj_arr = np.array(reproj_pts, dtype=np.float64)
+		xx_flat = reproj_arr[:, 0]
+		yy_flat = reproj_arr[:, 1]
+	else:
+		xx_flat = xx.ravel()
+		yy_flat = yy.ravel()
 
-			#vertex index
-			v1 = px + py * w #bottom right
+	zz_flat = zz.ravel()
+	nodata_flat = nodata_mask.ravel()
 
-			#Filter nodata
-			if z == georaster.noData:
-				nodata.add(v1)
-			else:
-				verts.append((x, y, z))
-				idxMap[v1] = len(verts) - 1
-
-				#build face from bottomright to topright (using only points already created)
-				if buildFaces and px > 0 and py > 0: #filter first row and column
-					v2 = v1 - step #bottom left
-					v3 = v2 - w * step #topleft
-					v4 = v3 + step #topright
-					f = [v4, v3, v2, v1] #anticlockwise --> face up
-					if not any(v in nodata for v in f):
-						f = [idxMap[v] for v in f]
-						faces.append(f)
+	if not buildFaces or nodata_flat.any():
+		# Wenn NoData-Punkte vorhanden oder keine Faces: kompakter Pfad mit idxMap
+		verts = []
+		faces = []
+		nodata_set = set()
+		idxMap = {}
+		for lin_idx in range(h_s * w_s):
+			py = lin_idx // w_s
+			px = lin_idx % w_s
+			if nodata_flat[lin_idx]:
+				nodata_set.add(lin_idx)
+				continue
+			verts.append((float(xx_flat[lin_idx]), float(yy_flat[lin_idx]), float(zz_flat[lin_idx])))
+			idxMap[lin_idx] = len(verts) - 1
+			if buildFaces and px > 0 and py > 0:
+				v1 = lin_idx
+				v2 = v1 - 1          # left
+				v3 = v2 - w_s        # top-left
+				v4 = v1 - w_s        # top
+				f = [v4, v3, v2, v1]
+				if not any(v in nodata_set for v in f):
+					faces.append([idxMap[v] for v in f])
+	else:
+		# Schneller Pfad: kein NoData, reguläres Gitter
+		verts = list(zip(xx_flat.tolist(), yy_flat.tolist(), zz_flat.tolist()))
+		if buildFaces:
+			faces = [(x + y * w_s, x + y * w_s + 1, x + y * w_s + 1 + w_s, x + y * w_s + w_s)
+			         for y in range(h_s - 1) for x in range(w_s - 1)]
+		else:
+			faces = []
 
 	mesh = bpy.data.meshes.new("DEM")
 	mesh.from_pydata(verts, [], faces)
 	mesh.update()
-
 	return mesh
 
 
@@ -330,7 +348,9 @@ class bpyGeoRaster(GeoRaster):
 			return None
 		nbBands = self.bpyImg.channels #Blender will return 4 channels even with a one band tiff
 		# Make a first Numpy array in one dimension
-		a = np.array(self.bpyImg.pixels[:])#[r,g,b,a,r,g,b,a,r,g,b,a, ... ] counting from bottom to up and left to right
+		# foreach_get vermeidet die teure Python-Liste-Materialisierung von pixels[:]
+		a = np.empty(len(self.bpyImg.pixels), dtype=np.float32)
+		self.bpyImg.pixels.foreach_get(a)  #[r,g,b,a,r,g,b,a,r,g,b,a, ... ] counting from bottom to up and left to right
 		# Regroup rgba values
 		a = a.reshape(len(a)//nbBands, nbBands)#[[r,g,b,a],[r,g,b,a],[r,g,b,a],[r,g,b,a]...]
 		# Build 2 dimensional array (In numpy first dimension represents rows (y) and second dimension represents cols (x))

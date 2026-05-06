@@ -22,20 +22,24 @@ class Point:
 def unique(L):
 	"""Return a list of unhashable elements in s, but without duplicates.
 	[[1, 2], [2, 3], [1, 2]] >>> [[1, 2], [2, 3]]"""
-	#For unhashable objects, you can sort the sequence and then scan from the end of the list, deleting duplicates as you go
+	# Sort so equal elements are adjacent, then do a single O(n) pass
+	# instead of the old O(n²) reverse-delete approach.
 	nDupli=0
 	nZcolinear=0
-	L.sort()#sort() brings the equal elements together; then duplicates are easy to weed out in a single pass.
-	last = L[-1]
-	for i in range(len(L)-2, -1, -1):
-		if last[:2] == L[i][:2]:#XY coordinates compararison
-			if last[2] == L[i][2]:#Z coordinates compararison
-				nDupli+=1#duplicates vertices
-			else:#Z colinear
+	L.sort()
+	result = []
+	seen_xy = set()
+	for pt in L:
+		xy = (pt[0], pt[1])
+		if xy in seen_xy:
+			if pt[2] == result[-1][2]:
+				nDupli+=1
+			else:
 				nZcolinear+=1
-			del L[i]
 		else:
-			last = L[i]
+			seen_xy.add(xy)
+			result.append(pt)
+	L[:] = result  # mutate in-place so callers see the change
 	return (nDupli, nZcolinear)#list data type is mutable, input list will automatically update and doesn't need to be returned
 
 def checkEqual(lst):

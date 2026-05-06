@@ -31,6 +31,12 @@
 import math
 import numpy as np
 
+try:
+	from scipy.ndimage import convolve as _scipy_convolve
+	_HAS_SCIPY = True
+except Exception:
+	_HAS_SCIPY = False
+
 DTYPEf = np.float32
 #DTYPEi = np.int32
 
@@ -83,34 +89,46 @@ def replace_nans(array, max_iter, tolerance, kernel_size=1, method='localmean'):
 	H, W = filled.shape
 	ks = kernel_size
 
+	# Kernel with center zeroed out: we never average a cell with itself.
+	conv_kernel = kernel.copy()
+	conv_kernel[ks, ks] = 0.0
+
 	# Iterate Jacobi-style: each pass uses the previous pass's snapshot to avoid
 	# read-during-update artefacts. Information diffuses across NaN regions one
 	# kernel-radius per iteration.
 	prev_replaced = np.zeros_like(filled)
 	for it in range(max_iter):
 		valid = ~np.isnan(filled)
-		vals = np.where(valid, filled, 0.0)
+		vals = np.where(valid, filled, 0.0).astype(DTYPEf, copy=False)
+		valid_f = valid.astype(DTYPEf, copy=False)
 
-		weighted_sum = np.zeros_like(filled)
-		weight_sum = np.zeros_like(filled)
+		if _HAS_SCIPY:
+			# Single C-level convolution per pass replaces the (2k+1)^2 nested
+			# slice loop. mode='constant', cval=0 mirrors the original
+			# bounds-clipping (out-of-image neighbours contribute 0 weight).
+			weighted_sum = _scipy_convolve(vals, conv_kernel, mode='constant', cval=0.0)
+			weight_sum = _scipy_convolve(valid_f, conv_kernel, mode='constant', cval=0.0)
+		else:
+			weighted_sum = np.zeros_like(filled)
+			weight_sum = np.zeros_like(filled)
 
-		for I in range(2*ks+1):
-			for J in range(2*ks+1):
-				# Skip kernel center (the cell being filled).
-				if I - ks == 0 and J - ks == 0:
-					continue
-				w = kernel[I, J]
-				if w == 0:
-					continue
-				di = I - ks
-				dj = J - ks
-				# Slices that read from (i+di, j+dj) into (i, j) with bounds-clipping.
-				src_i = slice(max(0, di), H + min(0, di))
-				src_j = slice(max(0, dj), W + min(0, dj))
-				dst_i = slice(max(0, -di), H + min(0, -di))
-				dst_j = slice(max(0, -dj), W + min(0, -dj))
-				weighted_sum[dst_i, dst_j] += w * vals[src_i, src_j]
-				weight_sum[dst_i, dst_j] += w * valid[src_i, src_j]
+			for I in range(2*ks+1):
+				for J in range(2*ks+1):
+					# Skip kernel center (the cell being filled).
+					if I - ks == 0 and J - ks == 0:
+						continue
+					w = kernel[I, J]
+					if w == 0:
+						continue
+					di = I - ks
+					dj = J - ks
+					# Slices that read from (i+di, j+dj) into (i, j) with bounds-clipping.
+					src_i = slice(max(0, di), H + min(0, di))
+					src_j = slice(max(0, dj), W + min(0, dj))
+					dst_i = slice(max(0, -di), H + min(0, -di))
+					dst_j = slice(max(0, -dj), W + min(0, -dj))
+					weighted_sum[dst_i, dst_j] += w * vals[src_i, src_j]
+					weight_sum[dst_i, dst_j] += w * valid[src_i, src_j]
 
 		with np.errstate(invalid='ignore', divide='ignore'):
 			new_vals = weighted_sum / weight_sum

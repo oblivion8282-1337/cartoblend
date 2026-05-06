@@ -309,7 +309,13 @@ class VIEW3D_PT_gis_map(bpy.types.Panel):
 				row.operator("view3d.map_start", icon_value=icons_dict["layers"].icon_id, text="Start")
 				sub = row.row(align=True)
 				sub.operator("view3d.map_resume", icon='LOOP_FORWARDS', text="Resume")
-				sub.enabled = bpy.ops.view3d.map_resume.poll() if hasattr(bpy.ops.view3d, 'map_resume') else False
+				sub.enabled = bool(
+					_mv2
+					and context.area is not None and context.area.type == 'VIEW_3D'
+					and getattr(_mv2, '_last_map_src', None) is not None
+					and getattr(_mv2, '_last_map_lay', None) is not None
+					and getattr(_mv2, '_last_map_grd', None) is not None
+				)
 
 			# ── Markers ──
 			from .geoscene import GeoScene

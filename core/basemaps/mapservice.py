@@ -25,6 +25,8 @@ import math
 import threading
 import queue
 import collections
+from functools import cached_property
+from concurrent.futures import ThreadPoolExecutor
 import urllib.request
 import urllib.parse
 import urllib.error
@@ -417,20 +419,29 @@ class BBoxRequest():
 		self.nbTilesX = math.ceil( (xmax - xmin) / (self.tileSize * self.res) )
 		self.nbTilesY = math.ceil( (ymax - ymin) / (self.tileSize * self.res) )
 
-	@property
+	@cached_property
 	def cols(self):
 		return [self.firstCol+i for i in range(self.nbTilesX)]
 
-	@property
+	@cached_property
 	def rows(self):
 		if self.tm.originLoc == "NW":
 			return [self.firstRow+i for i in range(self.nbTilesY)]
 		else:
 			return [self.firstRow-i for i in range(self.nbTilesY)]
 
-	@property
+	@cached_property
 	def tiles(self):
-		return [(c, r, self.zoom) for c in self.cols for r in self.rows]
+		cols = self.cols
+		rows = self.rows
+		tiles = [(c, r, self.zoom) for c in cols for r in rows]
+		# Center-out ordering by Manhattan distance: visible center tiles
+		# materialise first while edges are still streaming.
+		if cols and rows:
+			cx = (cols[0] + cols[-1]) / 2
+			cy = (rows[0] + rows[-1]) / 2
+			tiles.sort(key=lambda t: abs(t[0] - cx) + abs(t[1] - cy))
+		return tiles
 
 	@property
 	def nbTiles(self):
@@ -642,7 +653,7 @@ class MapService():
 		self._connPool = _ConnectionPool(timeout=TIMEOUT)
 
 		#LRU cache for decoded tile images (avoids repeated PNG/JPG decode)
-		self._decodeCacheMax = 500
+		self._decodeCacheMax = 2000
 		self._decodeCache = collections.OrderedDict()
 		self._decodeCacheLock = threading.Lock()
 
@@ -1235,12 +1246,39 @@ class MapService():
 		if not bigTiff:
 			#Create numpy image in memory
 			mosaic = NpImage.new(img_w, img_h, bkgColor=MOSAIC_BKG_COLOR, georef=georef)
-			chunkSize = min(10, rq.nbTiles) #number of tiles to extract in one cache request
+			# Larger chunks: one big cache fetch + parallel decode amortises
+			# overhead far better than 10-tile slices.
+			chunkSize = max(rq.nbTiles, 1)
 		else:
 			#Create bigtiff file on disk
 			mosaic = BigTiffWriter(path, img_w, img_h, georef)
 			ds = mosaic.ds
 			chunkSize = 5 #number of tiles to extract in one cache request
+
+		#Worker pool for parallel PNG/JPG decode. Pasting stays single-threaded
+		#because numpy paste into the shared mosaic is not thread-safe.
+		nbDecodeWorkers = max(1, os.cpu_count() or 4)
+
+		def _decodeTile(tile):
+			col, row, z, data = tile
+			if data is None:
+				return tile, NpImage.new(tileSize, tileSize, bkgColor=EMPTY_TILE_COLOR), False
+			cacheKey = (col, row, z)
+			with self._decodeCacheLock:
+				cached = self._decodeCache.get(cacheKey)
+				if cached is not None:
+					self._decodeCache.move_to_end(cacheKey)
+					return tile, cached, False
+			try:
+				img = NpImage(data)
+			except Exception:
+				log.warning('Corrupted tile z%d x%d y%d in cache, evicting', z, col, row)
+				return tile, None, True  # mark as corrupted
+			with self._decodeCacheLock:
+				self._decodeCache[cacheKey] = img
+				if len(self._decodeCache) > self._decodeCacheMax:
+					self._decodeCache.popitem(last=False)
+			return tile, img, False
 
 		#Build mosaic
 		for i in range(0, rq.nbTiles, chunkSize):
@@ -1254,37 +1292,26 @@ class MapService():
 
 			if cpt:
 				self.status = 3
-			for tile in tiles:
 
+			#Decode tiles in parallel (PNG/JPG decompress is CPU-bound but
+			#numpy/PIL release the GIL during decode -> threads scale).
+			if len(tiles) > 1 and nbDecodeWorkers > 1:
+				with ThreadPoolExecutor(max_workers=nbDecodeWorkers) as ex:
+					decoded = list(ex.map(_decodeTile, tiles))
+			else:
+				decoded = [_decodeTile(t) for t in tiles]
+
+			for tile, img, corrupted in decoded:
 				if not self.running:
 					if cpt:
 						self.status = 0
 					return None
 
-				col, row, z, data = tile
+				col, row, z, _data = tile
 
-				if data is None:
-					#create an empty tile
-					img = NpImage.new(tileSize, tileSize, bkgColor=EMPTY_TILE_COLOR)
-				else:
-					cacheKey = (col, row, z)
-					with self._decodeCacheLock:
-						img = self._decodeCache.get(cacheKey)
-						if img is not None:
-							self._decodeCache.move_to_end(cacheKey)
-					if img is None:
-						try:
-							img = NpImage(data)
-						except Exception as e:
-							log.warning('Corrupted tile z%d x%d y%d in cache, evicting', z, col, row)
-							cache.deleteTiles([(col, row, z)])
-							img = NpImage.new(tileSize, tileSize, bkgColor=CORRUPTED_TILE_COLOR)
-						else:
-							with self._decodeCacheLock:
-								self._decodeCache[cacheKey] = img
-								if len(self._decodeCache) > self._decodeCacheMax:
-									self._decodeCache.popitem(last=False)
-
+				if corrupted:
+					cache.deleteTiles([(col, row, z)])
+					img = NpImage.new(tileSize, tileSize, bkgColor=CORRUPTED_TILE_COLOR)
 
 				posx = (col - rq.firstCol) * tileSize
 				posy = abs((row - rq.firstRow)) * tileSize

@@ -192,7 +192,9 @@ class CAMERA_OT_geophotos_add(Operator):
                     pass
                 '''
 
-                img = bpy.data.images.load(filepath)
+                img = next((i for i in bpy.data.images if i.filepath == filepath), None)
+                if img is None:
+                    img = bpy.data.images.load(filepath)
                 w, h = img.size
                 cam['imageWidth']  = w #exif["PixelXDimension"] #for jpg, in tif file the tag is named imageWidth...
                 cam['imageHeight'] = h

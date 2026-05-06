@@ -198,12 +198,8 @@ class NpImage():
 
 	@classmethod
 	def new(cls, w, h, bkgColor=(255,255,255,255), noData=None, georef=None):
-		r, g, b, a = bkgColor
-		data = np.empty((h, w, 4), np.uint8)
-		data[:,:,0] = r
-		data[:,:,1] = g
-		data[:,:,2] = b
-		data[:,:,3] = a
+		# Single broadcast fill is one buffer pass instead of four.
+		data = np.full((h, w, 4), bkgColor, dtype=np.uint8)
 		return cls(data, noData=noData, georef=georef)
 
 	def _applySubBox(self, data):
@@ -375,10 +371,9 @@ class NpImage():
 	def addAlpha(self, opacity=255):
 		if self.nbBands == 3:
 			w, h = self.size
-			alpha = np.empty((h,w), dtype=self.dtype)
-			alpha.fill(opacity)
-			alpha = np.expand_dims(alpha, axis=2)
-			self.data = np.append(self.data, alpha, axis=2)
+			alpha = np.full((h, w), opacity, dtype=self.dtype)
+			# np.dstack avoids np.append's full reallocate-and-copy.
+			self.data = np.dstack((self.data, alpha))
 
 
 	def save(self, path):
@@ -418,7 +413,12 @@ class NpImage():
 
 	def paste(self, data, x, y):
 
-		img = NpImage(data)
+		# Fast-path: avoid re-wrapping an existing NpImage (NpImage(data) would
+		# otherwise re-run the constructor and discard the cached metadata).
+		if isinstance(data, NpImage):
+			img = data
+		else:
+			img = NpImage(data)
 		data = img.data
 		w, h = img.size
 

@@ -141,7 +141,7 @@ class Overpass(object):
         """
         if isinstance(data, bytes):
             data = data.decode(encoding)
-        data = json.loads(data, parse_float=Decimal)
+        data = json.loads(data)
         return Result.from_json(data, api=self)
 
     def parse_xml(self, data, encoding="utf-8"):
@@ -282,7 +282,7 @@ class Result(object):
         return result
 
     @classmethod
-    def from_xml(cls, data, api=None, iterparse=False):
+    def from_xml(cls, data, api=None, iterparse=True):
         """
         Create a new instance and load data from xml object.
 
@@ -306,10 +306,11 @@ class Result(object):
                 with open(data, 'r', encoding='utf-8') as f:
                     data = f.read() #all file in memory
             root = ET.fromstring(data)
-            for elem_cls in [Node, Way, Relation]:
-                for child in root:
-                    if child.tag.lower() == elem_cls._type_value:
-                        result.append(elem_cls.from_xml(child, result=result))
+            elem_classes = {'node': Node, 'way': Way, 'relation': Relation}
+            for child in root:
+                cls_for_tag = elem_classes.get(child.tag.lower())
+                if cls_for_tag is not None:
+                    result.append(cls_for_tag.from_xml(child, result=result))
         else:
             #Method 2 : iter parsing (memory friendly)
             #WARNING Issue #198
@@ -598,10 +599,10 @@ class Node(Element):
             node_id = int(node_id)
         lat = child.attrib.get("lat")
         if lat is not None:
-            lat = Decimal(lat)
+            lat = float(lat)
         lon = child.attrib.get("lon")
         if lon is not None:
-            lon = Decimal(lon)
+            lon = float(lon)
 
         attributes = {}
         ignore = ["id", "lat", "lon"]
