@@ -42,6 +42,7 @@ from ..core.proj import Reproj
 from ..core.utils import perf_clock
 
 from .utils import adjust3Dview, getBBOX, DropToGround
+from .io_import_osm import _apply_terrain_snap
 
 PKG = __package__.rsplit('.', maxsplit=1)[0]  # bl_ext.user_default.cartoblend
 
@@ -699,16 +700,17 @@ def _poll_shp_thread():
 	try:
 		prefs = bpy.context.preferences.addons[PKG].preferences
 
-		# Resolve raycaster on main thread (DropToGround uses bpy/BVHTree).
-		rayCaster = None
+		# Resolve elevation object on main thread. The actual Z-snap happens
+		# live via the GeoNodes Snap-to-Terrain modifier attached after the
+		# mesh is built, so feature elevation tracks the terrain's Displace
+		# strength instead of being baked at import time.
+		elevObj = None
 		if elevSource == 'OBJ':
 			try:
 				elevObj = scn.objects[objElevName]
 			except KeyError:
 				log.error("Elevation object '{}' not found in scene".format(objElevName))
 				return None
-			# BVH method: ~5-10x faster than per-vertex obj.ray_cast on big shp.
-			rayCaster = DropToGround(scn, elevObj, method='BVH')
 
 		shpName = os.path.basename(filepath)[:-4]
 
@@ -735,22 +737,13 @@ def _poll_shp_thread():
 			offset = feat['offset']
 
 			for geom_part in parts:
-				# Apply main-thread Z resolution for OBJ elevation source.
-				if elevSource == 'OBJ' and rayCaster is not None:
-					resolved = []
-					for (x, y, _z) in geom_part:
-						rcHit = rayCaster.rayCast(x=x-dx, y=y-dy)
-						# DropToGround returns hit.loc in world coords; .z is the
-						# vertical we want to attach to the (shifted) vertex.
-						resolved.append((x, y, rcHit.loc.z))
-					geom_part = resolved
-
-				# Shift coords (relative to scene origin)
+				# OBJ elevation source: keep Z at 0; the live Snap-to-Terrain
+				# modifier (added once per object below) does the raycast at
+				# every depsgraph evaluation so features follow the terrain's
+				# Displace strength.
 				if elevSource == 'OBJ':
-					# Z is already the raycast hit z (world); only shift x/y.
-					shifted = [(p[0]-dx, p[1]-dy, p[2]) for p in geom_part]
-				else:
-					shifted = [(p[0]-dx, p[1]-dy, p[2]) for p in geom_part]
+					geom_part = [(x, y, 0.0) for (x, y, _z) in geom_part]
+				shifted = [(p[0]-dx, p[1]-dy, p[2]) for p in geom_part]
 
 				# POINTS
 				if shpType == 'PointZ' or shpType == 'Point':
@@ -795,13 +788,13 @@ def _poll_shp_thread():
 								vect = (0, 0, offset)
 							faces = bmesh.ops.extrude_discrete_faces(bm, faces=[face])
 							verts = faces['faces'][0].verts
-							if elevSource == 'OBJ':
-								# Flat roof: lift all verts to max z + offset.
-								z = max([v.co.z for v in verts]) + offset
-								for v in verts:
-									v.co.z = z
-							else:
-								bmesh.ops.translate(bm, verts=verts, vec=vect)
+							# Lift the roof verts by `offset` along the chosen
+							# axis. Even with elevSource=='OBJ' we just translate
+							# now; the snap modifier will move each base vert
+							# onto the terrain at evaluation time, and the roof
+							# follows the same delta because it's just an
+							# offset above the base.
+							bmesh.ops.translate(bm, verts=verts, vec=vect)
 
 			# --- Per-feature finalisation when separateObjects=True ---------
 			if separateObjects:
@@ -822,6 +815,8 @@ def _poll_shp_thread():
 				obj = bpy.data.objects.new(name, mesh)
 				layer.objects.link(obj)
 				obj.location = (ox, oy, oz)
+				if elevObj is not None:
+					_apply_terrain_snap(obj, elevObj)
 				created_objects.append(obj)
 
 				# Write attribute data as custom properties.
@@ -879,6 +874,8 @@ def _poll_shp_thread():
 			context.view_layer.objects.active = obj
 			obj.select_set(True)
 			bpy.ops.object.origin_set(type='ORIGIN_GEOMETRY')
+			if elevObj is not None:
+				_apply_terrain_snap(obj, elevObj)
 
 		bm.free()
 		bm = None
