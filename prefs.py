@@ -727,24 +727,25 @@ class BGIS_PREFS(AddonPreferences):
 		row.operator("bgis.reset_dem_server", icon='PLAY_REVERSE')
 		# OpenTopography is a DEM service (not a tile provider); its key lives
 		# next to the DEM picker rather than in the basemap catalog.
-		row = sub.row(align=True)
-		# 4-state indicator next to the OpenTopography key:
-		#   empty                      → 'X'         (no key entered)
-		#   filled, untested           → 'QUESTION'  (key entered but not validated)
-		#   filled, tested → VALID     → 'CHECKMARK' (green-tinted)
-		#   filled, tested → INVALID   → 'CANCEL'    (red X)
+		# 4-state indicator next to the OpenTopography key.
+		# Icons chosen to be unmistakable in Blender's default theme:
+		#   empty     → 'X'            (faint X, neutral)
+		#   untested  → 'QUESTION'     (gray ?)
+		#   VALID     → 'CHECKBOX_HLT' (filled green checkbox, prominent)
+		#   INVALID   → 'CANCEL'       (red X, plus alert-highlighted field)
 		key = self.opentopography_api_key
 		status = self.opentopography_key_status
 		if not key:
-			icon = 'X'
+			icon, badge = 'X', ''
 		elif status == 'VALID':
-			icon = 'CHECKMARK'
+			icon, badge = 'CHECKBOX_HLT', 'valid'
 		elif status == 'INVALID':
-			icon = 'CANCEL'
+			icon, badge = 'CANCEL', 'invalid'
 		else:
-			icon = 'QUESTION'
-		row.label(text='', icon=icon)
-		row.label(text='OpenTopography Key')
+			icon, badge = 'QUESTION', 'not tested'
+
+		row = sub.row(align=True)
+		row.label(text='OpenTopography Key', icon=icon)
 		# Highlight the prop field red when the key was rejected.
 		field_row = row.row(align=True)
 		field_row.alert = (status == 'INVALID')
@@ -752,6 +753,13 @@ class BGIS_PREFS(AddonPreferences):
 		row.operator('bgis.test_opentopography_key', icon='FILE_REFRESH', text='Test')
 		op = row.operator('wm.url_open', icon='URL', text='')
 		op.url = 'https://portal.opentopography.org/myopentopo'
+
+		# Status badge underneath, with alert color when invalid — easier to spot
+		# than a small icon alone, especially for users new to Blender.
+		if badge:
+			badge_row = sub.row()
+			badge_row.alert = (status == 'INVALID')
+			badge_row.label(text='Status: ' + badge, icon=icon)
 
 		# OSM tag list + Import/Export options
 		sub = box.box()
