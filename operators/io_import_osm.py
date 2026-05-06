@@ -1138,13 +1138,13 @@ class OSM_IMPORT():
 			self.report({'ERROR'}, "Unable to reproject data, check logs for more infos")
 			return {'CANCELLED'}
 
+		elevObj = None
 		if self.useElevObj:
 			if not self.objElevLst:
 				log.error('There is no elevation object in the scene to get elevation from')
 				self.report({'ERROR'}, "There is no elevation object in the scene to get elevation from")
 				return {'CANCELLED'}
 			elevObj = scn.objects[int(self.objElevLst)]
-			rayCaster = DropToGround(scn, elevObj)
 
 		bmeshes = {}
 		vgroupsObj = {}
@@ -1206,19 +1206,14 @@ class OSM_IMPORT():
 			pts = rprj.pts(pts)
 			dx, dy = geoscn.crsx, geoscn.crsy
 
-			if self.useElevObj:
-				#pts = [rayCaster.rayCast(v[0]-dx, v[1]-dy).loc for v in pts]
-				pts = [rayCaster.rayCast(v[0]-dx, v[1]-dy) for v in pts]
-				hits = [pt.hit for pt in pts]
-				if not all(hits) and any(hits):
-					zs = [p.loc.z for p in pts if p.hit]
-					meanZ = sum(zs) / len(zs)
-					for v in pts:
-						if not v.hit:
-							v.loc.z = meanZ
-				pts = [pt.loc for pt in pts]
-			else:
-				pts = [ (v[0]-dx, v[1]-dy, 0) for v in pts]
+			# Always create verts at z=0. When useElevObj is True the live
+			# Snap-to-Terrain GeoNodes modifier (added below after the mesh
+			# is built) raycasts onto the terrain at every dependency-graph
+			# evaluation, so changes to the terrain's Displace strength flow
+			# through automatically. Baking z statically here would freeze
+			# features at import-time elevations and leave them floating
+			# whenever the terrain is rescaled.
+			pts = [(v[0]-dx, v[1]-dy, 0) for v in pts]
 
 			#Create a new bmesh
 			#>using an intermediate bmesh object allows some extra operation like extrusion
@@ -1377,6 +1372,13 @@ class OSM_IMPORT():
 						_apply_building_geonodes(obj)
 					if 'highway' in tags:
 						_apply_street_geonodes(obj)
+					# Live snap-to-terrain. _apply_terrain_snap moves the
+					# modifier to the top of the stack so verts are lifted
+					# onto the terrain BEFORE building extrusion / street
+					# width run. This makes feature elevation track the
+					# terrain's Displace strength at every redraw.
+					if elevObj is not None:
+						_apply_terrain_snap(obj, elevObj)
 
 					#Assign tags to custom props
 					obj['id'] = str(id) #cast to str to avoid overflow error "Python int too large to convert to C int"
@@ -1538,6 +1540,11 @@ class OSM_IMPORT():
 					_apply_building_geonodes(obj)
 				if 'highway' in name.lower():
 					_apply_street_geonodes(obj)
+				# Live snap-to-terrain — moved to top of modifier stack so
+				# verts are lifted onto the terrain before extrusion / width
+				# run. Tracks terrain Displace strength automatically.
+				if elevObj is not None:
+					_apply_terrain_snap(obj, elevObj)
 
 				vgroups = vgroupsObj.get(name, None)
 				if vgroups is not None:
